@@ -1,0 +1,120 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --color-pine: #0E3322;
+    --color-forest: #1E4D2B;
+    --color-leaf: #2F7D4E;
+    --color-gold: #E8AE1F;
+    --color-gold-tint: #FBF1D2;
+    --color-chalk: #F5F2E6;
+    --color-page: #F4F6F1;
+    --color-surface: #FFFFFF;
+    --color-ink: #15221A;
+    --color-line: #BCC7B9;
+
+    --font-heading: 'Poppins', sans-serif;
+    --font-body: 'Poppins', sans-serif;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    font-family: 'Poppins', sans-serif;
+  }
+
+  body {
+    font-family: 'Poppins', sans-serif;
+    color: #15221A;
+    background-color: #F4F6F1;
+    font-feature-settings: 'tnum' on, 'cv05' on;
+  }
+
+  *, button, input, select, textarea {
+    font-family: 'Poppins', sans-serif;
+  }
+
+  h1, h2, h3, h4, h5, h6, .font-display {
+    font-family: 'Poppins', sans-serif;
+    letter-spacing: -0.015em;
+  }
+
+  .font-sans {
+    font-family: 'Poppins', sans-serif;
+  }
+}
+
+/* Transitions and animation utilities */
+.reveal {
+  opacity: 0 !important;
+  transform: translateY(28px) !important;
+  transition: opacity 0.55s ease-out, transform 0.55s ease-out !important;
+  will-change: opacity, transform;
+}
+
+.reveal.visible {
+  opacity: 1 !important;
+  transform: translateY(0) !important;
+}
+
+.campus-dot {
+  opacity: 0;
+  transform: scale(0.5);
+  transition: opacity 0.35s ease, transform 0.35s ease;
+  will-change: opacity, transform;
+}
+
+.campus-dot.visible {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.campus-line {
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.6s ease-out;
+  will-change: transform;
+}
+
+.campus-line.visible {
+  transform: scaleX(1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal,
+  .campus-dot,
+  .campus-line {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
+}
+
+.transition-smooth {
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.hover-lift {
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 25px -5px rgba(14, 51, 34, 0.08), 0 8px 10px -6px rgba(14, 51, 34, 0.04);
+}
+
+/* Signature shape: 3 round corners (26px) and 1 square corner (6px) */
+.rounded-signature {
+  border-radius: 26px 26px 26px 6px;
+}
+
+.rounded-signature-hero {
+  border-radius: 26px 26px 26px 6px;
+}
+
+/* Hide scrollbar for clean horizontal nav */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

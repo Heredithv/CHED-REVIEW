@@ -1,0 +1,6 @@
+{
+  "name": "J.H. Cerilles State College — University Conversion: CHED Review Portal",
+  "description": "Public, read-only compliance review portal for J.H. Cerilles State College university conversion under RA No. 12295. Submitted institutional compliance data, CMO 46 metrics, and research expenditure audits for CHED reviewers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
