@@ -8,6 +8,7 @@ import {
   ChevronDown
 } from 'lucide-react';
 import { getSupabaseClient } from '../data/api';
+import { lookupDriveLinkTitle } from '../data/driveUrlTitles';
 import { DocumentLinkPreview } from '../components/DocumentLinkPreview';
 
 export type CampusId = 'Main Campus' | 'Dumingag Campus' | 'Pagadian Campus' | 'CMSE Campus';
@@ -347,6 +348,82 @@ function detectAreaId(
   return currentAreaId;
 }
 
+function isGenericEvidenceLabel(label: string): boolean {
+  const t = label.trim();
+  if (!t) return true;
+  if (/^https?:\/\//i.test(t)) return true;
+  if (/^(view evidence file|attached smart chips?|smart chip|supporting document|evidence file\s*\d*|evidences?|see evidences?( here)?:?|link|here)$/i.test(t)) {
+    return true;
+  }
+  if (/^(\d+[.)]|[a-z][.)]|[-•])$/i.test(t)) {
+    return true;
+  }
+  return false;
+}
+
+function normalizeEvidenceUrl(rawUrl: string): string {
+  const trimmed = rawUrl.trim().replace(/\.$/, '');
+  if (trimmed === 'https://drive.google.com/drive/folders/1W3o') {
+    return 'https://drive.google.com/drive/folders/1W3oExlYq5X651XKdmXEPg5qzFRrtqo1O?usp=drive_link';
+  }
+  if (trimmed === 'https://docs.google.com/document/d/17DvJ83_s_HdhhjZtcZPACWmeYe3ydzA') {
+    return 'https://docs.google.com/document/d/17DvJ83_s_HdhhjZtcZPACWmeYe3ydzAh/edit';
+  }
+  return trimmed;
+}
+
+function extractCandidateFileLabelsFromText(actualText: string): string[] {
+  if (!actualText) return [];
+  const candidates: string[] = [];
+  const lines = actualText
+    .split(/\r?\n/)
+    .map((l) =>
+      l
+        .replace(/https?:\/\/[^\s)]+/gi, '')
+        .replace(/^(?:See\s+)?(?:Area\s+[IVX]+\s+)?Evidences?\s*(?:here)?:?\s*/i, '')
+        .trim()
+    )
+    .filter(Boolean);
+
+  for (const line of lines) {
+    // 1. Explicit file names (.pdf, .docx, .jpg, .png, .jfif, .xlsx)
+    const fileMatch = line.match(/([^\n\r:]+\.(?:pdf|docx?|xlsx?|pptx?|jpg|jpeg|png|jfif))/i);
+    if (fileMatch) {
+      const cleaned = fileMatch[1]
+        .replace(/^(?:[a-z0-9]+[.)]|[-•])\s*/i, '')
+        .trim();
+      if (cleaned && !candidates.includes(cleaned)) {
+        candidates.push(cleaned);
+        continue;
+      }
+    }
+
+    // 2. Labeled credential/designation lines (e.g. "Credentials: TORMES_EMELYN_DACOL")
+    const kvMatch = line.match(/^(?:[a-z0-9]+[.)]\s*)?(Credentials|PRC(?:\s*ID)?|Designation)\s*:\s*(.+)$/i);
+    if (kvMatch && kvMatch[2].trim()) {
+      const val = kvMatch[2].trim();
+      if (!candidates.includes(val)) {
+        candidates.push(val);
+        continue;
+      }
+    }
+
+    // 3. Short standalone title lines (when cell only contains a folder/chip name like "2 RCW Policies")
+    if (
+      lines.length <= 2 &&
+      line.length <= 90 &&
+      !/^[-•]\s*(no\s+copc|to\s+secure|may\s+use|check\s+with|c\/o\s+)/i.test(line)
+    ) {
+      const cleaned = line.replace(/^(?:[a-z0-9]+[.)]|[-•])\s*/i, '').trim();
+      if (cleaned && !candidates.includes(cleaned)) {
+        candidates.push(cleaned);
+      }
+    }
+  }
+
+  return candidates;
+}
+
 function extractEvidencesForRow(
   row: ProgrammaticDbRow,
   dbEvidences: ProgrammaticEvidenceDbRow[]
@@ -354,7 +431,11 @@ function extractEvidencesForRow(
   const results: ProgramEvidenceItem[] = [];
   const seenUrls = new Set<string>();
 
-  const actualText = row.actual_situation || '';
+  // Re-join any URL broken across lines by newline characters in actual_situation
+  const actualText = (row.actual_situation || '').replace(
+    /(https?:\/\/[^\s)\r\n]+)\r?\n([A-Za-z0-9_\-?=&#/]+)/g,
+    '$1$2'
+  );
   const lines = actualText
     .split(/\r?\n/)
     .map((l) => l.trim())
@@ -366,14 +447,23 @@ function extractEvidencesForRow(
     if (matches) {
       const textWithoutUrl = line
         .replace(/https?:\/\/[^\s)]+/gi, '')
+        .replace(/^(?:See\s+)?Evidences?\s*(?:here)?:?\s*/i, '')
         .replace(/^[:\-\s]+|[:\-\s]+$/g, '')
         .trim();
-      const prevLine = idx > 0 && !/https?:\/\//i.test(lines[idx - 1]) ? lines[idx - 1] : '';
-      const bestLabel = textWithoutUrl || prevLine;
+      const prevLine =
+        idx > 0 && !/https?:\/\//i.test(lines[idx - 1])
+          ? lines[idx - 1].replace(/^(?:See\s+)?Evidences?\s*(?:here)?:?\s*/i, '').trim()
+          : '';
+      const bestLabel =
+        textWithoutUrl && !isGenericEvidenceLabel(textWithoutUrl)
+          ? textWithoutUrl
+          : prevLine && !isGenericEvidenceLabel(prevLine)
+          ? prevLine
+          : '';
       matches.forEach((rawUrl) => {
         const splitUrls = rawUrl.split(/(?=https?:\/\/)/g);
         splitUrls.forEach((u) => {
-          const cleanU = u.trim();
+          const cleanU = normalizeEvidenceUrl(u);
           if (cleanU && bestLabel) {
             urlToInlineLabel.set(cleanU, bestLabel);
           }
@@ -381,6 +471,9 @@ function extractEvidencesForRow(
       });
     }
   });
+
+  const candidateTextLabels = extractCandidateFileLabelsFromText(actualText);
+  let candidateCursor = 0;
 
   const addUrl = (
     rawUrl: string,
@@ -390,19 +483,28 @@ function extractEvidencesForRow(
   ) => {
     const parts = rawUrl.split(/(?=https?:\/\/)/g);
     parts.forEach((part) => {
-      const cleanUrl = part.trim();
+      const cleanUrl = normalizeEvidenceUrl(part);
       if (!cleanUrl.startsWith('http')) return;
       if (seenUrls.has(cleanUrl)) return;
       seenUrls.add(cleanUrl);
 
       let label = candidateLabel
         .replace(/https?:\/\/[^\s)]+/gi, '')
-        .replace(/^See Evidences? here:\s*/i, '')
+        .replace(/^(?:See\s+)?Evidences?\s*(?:here)?:?\s*/i, '')
         .replace(/^[:\-\s]+|[:\-\s]+$/g, '')
         .trim();
 
-      if (!label || label.toLowerCase() === 'view evidence file') {
-        label = urlToInlineLabel.get(cleanUrl) || candidateLabel.trim() || `Evidence File ${indexHint}`;
+      if (isGenericEvidenceLabel(label)) {
+        const resolvedDriveTitle = lookupDriveLinkTitle(cleanUrl);
+        if (resolvedDriveTitle && !isGenericEvidenceLabel(resolvedDriveTitle)) {
+          label = resolvedDriveTitle;
+        } else if (urlToInlineLabel.get(cleanUrl)) {
+          label = urlToInlineLabel.get(cleanUrl)!;
+        } else if (candidateCursor < candidateTextLabels.length) {
+          label = candidateTextLabels[candidateCursor++];
+        } else {
+          label = `Evidence Document ${indexHint}`;
+        }
       }
 
       results.push({
@@ -422,10 +524,74 @@ function extractEvidencesForRow(
 
   const inlineUrls = actualText.match(/https?:\/\/[^\s)]+/gi) || [];
   inlineUrls.forEach((u, idx) => {
-    addUrl(u, urlToInlineLabel.get(u) || 'View Evidence File', 'Actual Situation', idx + 1);
+    addUrl(u, urlToInlineLabel.get(normalizeEvidenceUrl(u)) || '', 'Actual Situation', idx + 1);
   });
 
+  // Fallback for MS Agriculture Row 10 ("a. BRN for PhD Agri") where the sheet hyperlink was not in programmatic_evidences
+  if (
+    results.length === 0 &&
+    (row.id === 'Dumingag_MS Agri_10' || row.id === 'Dumingag_MS Crim_10') &&
+    /BRN for PhD Agri/i.test(actualText)
+  ) {
+    results.push({
+      id: `${row.id}-ev-1`,
+      label: 'a. BRN for PhD Agri (Board Resolution No. 78, s. 2026)',
+      columnSource: 'Actual Situation',
+      driveLink: 'https://drive.google.com/file/d/1CRW8fMH_ZGoHTTTJpr3JVAal4OICRwyQ/view?usp=drive_link'
+    });
+  }
+
   return results;
+}
+
+function stripRedundantEvidenceFilenamesFromActual(
+  cleanActual: string,
+  evidences: ProgramEvidenceItem[]
+): string {
+  if (!cleanActual || evidences.length === 0) return cleanActual;
+
+  const normalizeForCompare = (s: string) =>
+    s
+      .toLowerCase()
+      .replace(/^(?:see\s+)?(?:area\s+[ivx]+\s+)?evidences?\s*(?:here)?:?\s*/i, '')
+      .replace(/^(?:[a-z0-9]+[.)]|[-•])\s*/i, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const evidenceLabelSet = new Set<string>();
+  evidences.forEach((ev) => {
+    const norm = normalizeForCompare(ev.label);
+    if (norm) {
+      evidenceLabelSet.add(norm);
+      // Also match without file extension if needed
+      const withoutExt = norm.replace(/\.(pdf|docx?|xlsx?|pptx?|jpg|jpeg|png|jfif)$/i, '').trim();
+      if (withoutExt) evidenceLabelSet.add(withoutExt);
+    }
+  });
+
+  const rawLines = cleanActual.split(/\r?\n/);
+  const keptLines = rawLines.filter((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return true;
+    if (/^(?:see\s+)?(?:area\s+[ivx]+\s+)?evidences?\s*(?:here)?:?$/i.test(trimmed)) {
+      return false;
+    }
+    const normLine = normalizeForCompare(trimmed);
+    if (!normLine) return false;
+    if (evidenceLabelSet.has(normLine)) {
+      return false;
+    }
+    const normLineNoExt = normLine.replace(/\.(pdf|docx?|xlsx?|pptx?|jpg|jpeg|png|jfif)$/i, '').trim();
+    if (normLineNoExt && evidenceLabelSet.has(normLineNoExt) && /\.(pdf|docx?|xlsx?|pptx?|jpg|jpeg|png|jfif)$/i.test(normLine)) {
+      return false;
+    }
+    return true;
+  });
+
+  return keptLines
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 function buildProgramSheetsFromDb(
@@ -495,7 +661,8 @@ function buildProgramSheetsFromDb(
         .trim();
 
       let cleanPsg = formatDatabaseCellText(psgText, areaText);
-      const cleanActual = formatDatabaseCellText(actualText, areaText);
+      const rawCleanActual = formatDatabaseCellText(actualText, areaText);
+      const cleanActual = stripRedundantEvidenceFilenamesFromActual(rawCleanActual, rowEvidences);
 
       // In Area I and Area IX, if `psg_requirement` is empty in the sheet because the requirement description
       // was written inside Column A (`area_of_compliance`), extract that description into `cleanPsg`
@@ -640,7 +807,7 @@ export async function preloadProgramsData(forceRefresh = false): Promise<Program
       const client = getSupabaseClient();
       if (!client) return null;
 
-      const [formsPage1, formsPage2, evPage1] = await Promise.all([
+      const [formsPage1, formsPage2, evPage1, evPage2] = await Promise.all([
         client
           .from('programmatic_forms')
           .select('*')
@@ -655,7 +822,12 @@ export async function preloadProgramsData(forceRefresh = false): Promise<Program
           .from('programmatic_evidences')
           .select('*')
           .order('id', { ascending: true })
-          .range(0, 999)
+          .range(0, 999),
+        client
+          .from('programmatic_evidences')
+          .select('*')
+          .order('id', { ascending: true })
+          .range(1000, 2999)
       ]);
 
       if (formsPage1.error || !formsPage1.data) return null;
@@ -665,10 +837,12 @@ export async function preloadProgramsData(forceRefresh = false): Promise<Program
         ...((formsPage2.data || []) as ProgrammaticDbRow[])
       ];
 
-      const built = buildProgramSheetsFromDb(
-        allFormRows,
-        (evPage1.data || []) as ProgrammaticEvidenceDbRow[]
-      );
+      const allEvidenceRows = [
+        ...((evPage1.data || []) as ProgrammaticEvidenceDbRow[]),
+        ...((evPage2.data || []) as ProgrammaticEvidenceDbRow[])
+      ];
+
+      const built = buildProgramSheetsFromDb(allFormRows, allEvidenceRows);
       cachedProgramsList = built;
       return built;
     } catch {
@@ -1306,13 +1480,19 @@ export const ProgramsPage: React.FC<ProgramsPageProps> = ({ initialCampus }) => 
                                       <div className="text-[11px] font-extrabold uppercase tracking-wider text-[#1E4D2B] mb-2">
                                         Actual Situation
                                       </div>
-                                      <p className="text-sm text-[#15221A] leading-relaxed whitespace-pre-line">
-                                        {row.cleanActualSituation || '—'}
-                                      </p>
+                                      {(row.cleanActualSituation || row.evidences.length === 0) && (
+                                        <p className="text-sm text-[#15221A] leading-relaxed whitespace-pre-line">
+                                          {row.cleanActualSituation || '—'}
+                                        </p>
+                                      )}
 
                                       {/* Supporting Evidence Links from `programmatic_evidences` */}
                                       {row.evidences.length > 0 && (
-                                        <div className="mt-3.5 flex flex-wrap items-center gap-2">
+                                        <div
+                                          className={`${
+                                            row.cleanActualSituation ? 'mt-3.5' : 'mt-1'
+                                          } flex flex-wrap items-center gap-2`}
+                                        >
                                           {row.evidences.map((ev) => (
                                             <DocumentLinkPreview
                                               key={ev.id}

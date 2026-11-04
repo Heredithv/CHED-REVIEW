@@ -18,6 +18,7 @@ import {
 import { InnerHeroBand } from '../components/InnerHeroBand';
 import { exportForm6ToExcel } from '../utils/excelExport';
 import { getSupabaseClient } from '../data/api';
+import { lookupDriveLinkTitle } from '../data/driveUrlTitles';
 import { DocumentLinkPreview, convertToDrivePreviewUrl } from '../components/DocumentLinkPreview';
 
 export interface Form6DbRow {
@@ -104,7 +105,7 @@ interface DocumentViewerModalState {
   isFolder: boolean;
 }
 
-const FORM6_CACHE_KEY = 'jhcsc_form6_supabase_v4';
+const FORM6_CACHE_KEY = 'jhcsc_form6_supabase_v5';
 
 let cachedForm6ByCampus: Record<CampusId, Form6RecordItem[]> | null = null;
 let prefetchForm6Promise: Promise<Record<CampusId, Form6RecordItem[]> | null> | null = null;
@@ -356,8 +357,16 @@ export async function fetchAllForm6Data(): Promise<Record<CampusId, Form6RecordI
       evidencesByParentId.set(key, []);
     }
     const cleanLink = normalizeNullableString(ev.drive_link);
+    const rawEvText = normalizeNullableString(ev.evidence_text);
+    const isGenericText =
+      !rawEvText ||
+      /^(view evidence file|attached smart chips?|smart chip|supporting document|evidences?)$/i.test(
+        rawEvText
+      );
+    const resolvedDriveTitle = cleanLink ? lookupDriveLinkTitle(cleanLink) : null;
     const cleanText =
-      normalizeNullableString(ev.evidence_text) || (cleanLink ? 'Supporting Document' : '');
+      (!isGenericText ? rawEvText : resolvedDriveTitle || rawEvText) ||
+      (cleanLink ? 'Supporting Document' : '');
     if (!cleanText && !cleanLink) return;
 
     evidencesByParentId.get(key)!.push({
