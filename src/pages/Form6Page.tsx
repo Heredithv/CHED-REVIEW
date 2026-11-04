@@ -687,15 +687,15 @@ export const Form6Page: React.FC = () => {
                 )}
               </div>
 
-              <button
-                type="button"
-                onClick={handleExportExcel}
-                disabled={campusRecords.length === 0}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 border border-[#0E3322] text-[#0E3322] font-bold text-xs rounded-lg hover:bg-[#0E3322] hover:text-white disabled:opacity-40 transition-all cursor-pointer"
+              <a
+                href="https://docs.google.com/spreadsheets/d/1YLvHROQLYAJ9WQel4onl-efPp_qF6KBLLvwFDNbujNE/edit?usp=sharing"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 border border-[#1E4D2B] text-[#1E4D2B] font-bold text-xs rounded-full hover:bg-[#1E4D2B]/5 transition-all cursor-pointer whitespace-nowrap shadow-2xs"
               >
-                <Download className="w-3.5 h-3.5" />
-                <span>Export</span>
-              </button>
+                <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                <span>View spreadsheet</span>
+              </a>
             </div>
           </div>
 

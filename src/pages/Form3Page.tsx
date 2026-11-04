@@ -133,6 +133,11 @@ export const Form3Page: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
+  const [summaryViewMode, setSummaryViewMode] = useState<'graph' | 'table'>('graph');
+  const [summaryMetricMode, setSummaryMetricMode] = useState<'count' | 'percentage'>('count');
+  const [activeSeriesFilter, setActiveSeriesFilter] = useState<'all' | 'ongoing' | 'completed' | 'both'>('all');
+  const [hoveredClusterId, setHoveredClusterId] = useState<string | null>(null);
+  const [hoveredSeriesKey, setHoveredSeriesKey] = useState<'ongoing' | 'completed' | 'both' | null>(null);
   const [selectedCampus, setSelectedCampus] = useState<string>('All campuses');
   const [summaryCampus, setSummaryCampus] = useState<string>('All campuses');
   const [selectedSchool, setSelectedSchool] = useState<string>('All schools');
@@ -1418,8 +1423,8 @@ export const Form3Page: React.FC = () => {
             Faculty count and research engagement rate per school and academic department.
           </p>
 
-          {/* Campus Filter Pills for Summary Table */}
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+          {/* Campus Filter Pills & Graph/Table View Switcher for Summary */}
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
@@ -1455,91 +1460,644 @@ export const Form3Page: React.FC = () => {
                     </button>
                   );
                 })}
+
+              {summaryCampus !== 'All campuses' && (
+                <button
+                  type="button"
+                  onClick={() => setSummaryCampus('All campuses')}
+                  className="text-xs text-[#1E4D2B] hover:underline font-semibold cursor-pointer whitespace-nowrap pl-1"
+                >
+                  Show all campuses
+                </button>
+              )}
             </div>
 
-            {summaryCampus !== 'All campuses' && (
+            {/* View Switcher (Graph | Table) matching Directory switcher */}
+            <div className="inline-flex items-center p-0.5 bg-[#EEF1EB] rounded-full border border-[#E5E9E2]">
               <button
                 type="button"
-                onClick={() => setSummaryCampus('All campuses')}
-                className="text-xs text-[#1E4D2B] hover:underline font-semibold cursor-pointer whitespace-nowrap pl-1"
+                onClick={() => setSummaryViewMode('graph')}
+                className={`inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-semibold transition-all cursor-pointer ${
+                  summaryViewMode === 'graph'
+                    ? 'bg-[#0E3322] text-white shadow-xs'
+                    : 'text-[#475569] hover:text-[#0E3322]'
+                }`}
+                title="View summary as visual bar graph cards"
               >
-                Show all campuses
+                <span>Graph</span>
               </button>
-            )}
+              <button
+                type="button"
+                onClick={() => setSummaryViewMode('table')}
+                className={`inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-semibold transition-all cursor-pointer ${
+                  summaryViewMode === 'table'
+                    ? 'bg-[#0E3322] text-white shadow-xs'
+                    : 'text-[#475569] hover:text-[#0E3322]'
+                }`}
+                title="View summary as table"
+              >
+                <span>Table</span>
+              </button>
+            </div>
           </div>
 
-          <div className="overflow-x-auto custom-table-scrollbar border border-[#E2E8F0] rounded-xl">
-            <table className="w-full text-left border-collapse min-w-[860px]">
-              <thead>
-                <tr className="bg-[#1E4D2B] text-white text-[10.5px] font-bold uppercase tracking-wider divide-x divide-[#2b6d3d] border-b border-[#1E4D2B]">
-                  <th scope="col" className="py-3 pl-4 pr-3">Campus / School</th>
-                  <th scope="col" className="py-3 px-3 text-right">No. of Faculty</th>
-                  <th scope="col" className="py-3 px-3 text-right">Ongoing</th>
-                  <th scope="col" className="py-3 px-2 text-right">%</th>
-                  <th scope="col" className="py-3 px-3 text-right">Completed</th>
-                  <th scope="col" className="py-3 px-2 text-right">%</th>
-                  <th scope="col" className="py-3 px-3 text-right">Both</th>
-                  <th scope="col" className="py-3 pr-4 pl-2 text-right">%</th>
-                </tr>
-              </thead>
-              <tbody className="text-xs divide-y divide-[#F1F5F9] bg-white">
-                {displayedSummaryGroups.map((group) => (
-                  <React.Fragment key={group.campusName}>
-                    <tr className="bg-[#FAFBF8] border-y border-[#BCC7B9]/60">
-                      <td colSpan={8} className="py-2.5 px-4">
-                        <div className="font-bold text-[#0E3322] text-xs uppercase tracking-wide flex items-center gap-2">
-                          <span className="inline-block w-2.5 h-2.5 rounded-full bg-[#E8AE1F] shrink-0" />
-                          <span>{group.campusName}</span>
-                        </div>
-                      </td>
-                    </tr>
-                    {group.rows.map((r) => (
-                      <tr key={r.department_or_academic_program} className="hover:bg-[#F8FAFC] transition-colors divide-x divide-[#F1F5F9]">
-                        <td className="py-2.5 pl-6 pr-3 text-[#15221A] font-medium">
-                          {r.department_or_academic_program}
-                        </td>
-                        <td className="py-2.5 px-3 text-right font-semibold text-[#15221A]">{r.total_faculty}</td>
-                        <td className="py-2.5 px-3 text-right font-medium text-[#15221A]">{r.ongoing_faculty}</td>
-                        <td className="py-2.5 px-2 text-right text-[#64748B]">{Number(r.ongoing_percentage).toFixed(2)}%</td>
-                        <td className="py-2.5 px-3 text-right font-medium text-[#1E4D2B]">{r.completed_faculty}</td>
-                        <td className="py-2.5 px-2 text-right text-[#64748B]">{Number(r.completed_percentage).toFixed(2)}%</td>
-                        <td className="py-2.5 px-3 text-right font-medium text-[#15221A]">{r.both_faculty}</td>
-                        <td className="py-2.5 pr-4 pl-2 text-right text-[#64748B]">{Number(r.both_percentage).toFixed(2)}%</td>
-                      </tr>
-                    ))}
-                    {group.totalRow && (
-                      <tr className="bg-[#FAFBF8] font-bold text-[#15221A] border-t border-[#E2E8F0] divide-x divide-[#E2E8F0]">
-                        <td className="py-3 pl-6 pr-3 text-[#0E3322]">
-                          {group.campusName} TOTAL
-                        </td>
-                        <td className="py-3 px-3 text-right">{group.totalRow.total_faculty}</td>
-                        <td className="py-3 px-3 text-right text-[#15221A]">{group.totalRow.ongoing_faculty}</td>
-                        <td className="py-3 px-2 text-right">{Number(group.totalRow.ongoing_percentage).toFixed(2)}%</td>
-                        <td className="py-3 px-3 text-right text-[#1E4D2B]">{group.totalRow.completed_faculty}</td>
-                        <td className="py-3 px-2 text-right">{Number(group.totalRow.completed_percentage).toFixed(2)}%</td>
-                        <td className="py-3 px-3 text-right">{group.totalRow.both_faculty}</td>
-                        <td className="py-3 pr-4 pl-2 text-right">{Number(group.totalRow.both_percentage).toFixed(2)}%</td>
-                      </tr>
+          {/* GRAPH VIEW — Interactive Branded Grouped Bar Chart (Ongoing, Completed, Both side by side) */}
+          {summaryViewMode === 'graph' && (() => {
+            const isAllCampuses = summaryCampus === 'All campuses';
+
+            // Build chart clusters:
+            // - When viewing TOTAL (All campuses): one cluster per campus using the campus totals row
+            // - When viewing a single campus: one cluster per school/department in that campus
+            const clusters = isAllCampuses
+              ? groupedSummary.groups
+                  .filter((g) => {
+                    const upper = g.campusName.trim().toUpperCase();
+                    return upper !== 'ALL CAMPUSES' && !upper.includes('GRAND TOTAL') && (g.totalRow || g.rows.length > 0);
+                  })
+                  .map((g) => {
+                    const totalFaculty =
+                      g.totalRow?.total_faculty ??
+                      g.rows.reduce((acc, r) => acc + (Number(r.total_faculty) || 0), 0);
+                    const ongoing =
+                      g.totalRow?.ongoing_faculty ??
+                      g.rows.reduce((acc, r) => acc + (Number(r.ongoing_faculty) || 0), 0);
+                    const completed =
+                      g.totalRow?.completed_faculty ??
+                      g.rows.reduce((acc, r) => acc + (Number(r.completed_faculty) || 0), 0);
+                    const both =
+                      g.totalRow?.both_faculty ??
+                      g.rows.reduce((acc, r) => acc + (Number(r.both_faculty) || 0), 0);
+
+                    const ongoingPct =
+                      g.totalRow?.ongoing_percentage != null
+                        ? Number(g.totalRow.ongoing_percentage)
+                        : totalFaculty > 0
+                        ? (ongoing / totalFaculty) * 100
+                        : 0;
+                    const completedPct =
+                      g.totalRow?.completed_percentage != null
+                        ? Number(g.totalRow.completed_percentage)
+                        : totalFaculty > 0
+                        ? (completed / totalFaculty) * 100
+                        : 0;
+                    const bothPct =
+                      g.totalRow?.both_percentage != null
+                        ? Number(g.totalRow.both_percentage)
+                        : totalFaculty > 0
+                        ? (both / totalFaculty) * 100
+                        : 0;
+
+                    return {
+                      id: g.campusName,
+                      label: g.campusName,
+                      shortLabel: g.campusName.replace(/\s+Campus$/i, '') + ' Campus',
+                      totalFaculty,
+                      ongoing,
+                      ongoingPct,
+                      completed,
+                      completedPct,
+                      both,
+                      bothPct,
+                    };
+                  })
+              : (displayedSummaryGroups[0]?.rows || []).map((r) => ({
+                  id: r.department_or_academic_program,
+                  label: r.department_or_academic_program,
+                  shortLabel: r.department_or_academic_program,
+                  totalFaculty: Number(r.total_faculty) || 0,
+                  ongoing: Number(r.ongoing_faculty) || 0,
+                  ongoingPct: Number(r.ongoing_percentage) || 0,
+                  completed: Number(r.completed_faculty) || 0,
+                  completedPct: Number(r.completed_percentage) || 0,
+                  both: Number(r.both_faculty) || 0,
+                  bothPct: Number(r.both_percentage) || 0,
+                }));
+
+            const isPctMode = summaryMetricMode === 'percentage';
+
+            const rawMax = Math.max(
+              isPctMode ? 25 : 10,
+              ...clusters.flatMap((c) => {
+                const vals: number[] = [];
+                if (activeSeriesFilter === 'all' || activeSeriesFilter === 'ongoing') {
+                  vals.push(isPctMode ? c.ongoingPct : c.ongoing);
+                }
+                if (activeSeriesFilter === 'all' || activeSeriesFilter === 'completed') {
+                  vals.push(isPctMode ? c.completedPct : c.completed);
+                }
+                if (activeSeriesFilter === 'all' || activeSeriesFilter === 'both') {
+                  vals.push(isPctMode ? c.bothPct : c.both);
+                }
+                return vals;
+              })
+            );
+
+            // Compute clean Y-axis ceiling and 5 tick steps
+            const stepSize = isPctMode
+              ? rawMax <= 30 ? 5 : rawMax <= 60 ? 10 : 20
+              : rawMax <= 15 ? 3 : rawMax <= 25 ? 5 : rawMax <= 50 ? 10 : rawMax <= 75 ? 15 : 20;
+            const yMax = Math.min(isPctMode ? 100 : 9999, Math.ceil(rawMax / stepSize) * stepSize);
+            const yTicks = Array.from({ length: Math.floor(yMax / stepSize) + 1 }, (_, i) => yMax - i * stepSize);
+
+            const activeTotalRow = isAllCampuses
+              ? groupedSummary.grandTotal
+              : displayedSummaryGroups[0]?.totalRow;
+
+            const hoveredCluster = clusters.find((c) => c.id === hoveredClusterId) || null;
+
+            return (
+              <div className="bg-[#F4F6F1] border border-[#E5E9E2] rounded-[22px] overflow-hidden shadow-[0_4px_20px_rgba(21,34,26,0.04)]">
+                {/* Pine Green Brand Header Banner matching Portal Cards */}
+                <div className="bg-[#0E3322] px-5 sm:px-7 py-4 flex flex-wrap items-center justify-between gap-4 text-white">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-[#E8AE1F] shrink-0" />
+                      <h3 className="text-base sm:text-lg font-extrabold text-white tracking-tight">
+                        {isAllCampuses
+                          ? 'Research Involvement by Campus (Campus Totals)'
+                          : `${summaryCampus} — Research Involvement by School`}
+                      </h3>
+                    </div>
+                    <p className="text-xs text-[#E3EFE8]/85 mt-0.5 pl-4.5">
+                      {isAllCampuses
+                        ? 'Click any campus cluster to drill down by school, or click a status in the legend to filter bars.'
+                        : `Hover over any school cluster to inspect figures, or click "TOTAL" above to return to all campuses.`}
+                    </p>
+                  </div>
+
+                  {/* Interactive Metric Scale Switcher: Count (#) vs Rate (%) */}
+                  <div className="flex items-center gap-2">
+                    {!isAllCampuses && (
+                      <button
+                        type="button"
+                        onClick={() => setSummaryCampus('All campuses')}
+                        className="px-3 py-1 rounded-full text-xs font-bold bg-white/10 hover:bg-white/20 text-[#E8AE1F] border border-white/15 transition-colors cursor-pointer"
+                      >
+                        ← All Campuses
+                      </button>
                     )}
-                  </React.Fragment>
-                ))}
-                {summaryCampus === 'All campuses' && groupedSummary.grandTotal && (
-                  <tr className="bg-[#E3EFE8] font-extrabold text-[#0E3322] border-t-2 border-[#1E4D2B] divide-x divide-[#BCC7B9]/60">
-                    <td className="py-3.5 pl-4 pr-3 text-sm font-extrabold text-[#0E3322]">
-                      Overall Total
-                    </td>
-                    <td className="py-3.5 px-3 text-right text-sm">{groupedSummary.grandTotal.total_faculty}</td>
-                    <td className="py-3.5 px-3 text-right text-sm text-[#0E3322]">{groupedSummary.grandTotal.ongoing_faculty}</td>
-                    <td className="py-3.5 px-2 text-right">{Number(groupedSummary.grandTotal.ongoing_percentage).toFixed(2)}%</td>
-                    <td className="py-3.5 px-3 text-right text-sm text-[#1E4D2B]">{groupedSummary.grandTotal.completed_faculty}</td>
-                    <td className="py-3.5 px-2 text-right">{Number(groupedSummary.grandTotal.completed_percentage).toFixed(2)}%</td>
-                    <td className="py-3.5 px-3 text-right text-sm">{groupedSummary.grandTotal.both_faculty}</td>
-                    <td className="py-3.5 pr-4 pl-2 text-right">{Number(groupedSummary.grandTotal.both_percentage).toFixed(2)}%</td>
+                    <div className="inline-flex items-center p-0.5 bg-white/10 rounded-full border border-white/15">
+                      <button
+                        type="button"
+                        onClick={() => setSummaryMetricMode('count')}
+                        className={`px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
+                          summaryMetricMode === 'count'
+                            ? 'bg-[#E8AE1F] text-[#15221A] shadow-2xs'
+                            : 'text-[#E3EFE8] hover:text-white'
+                        }`}
+                        title="Scale bars by number of faculty"
+                      >
+                        Count (#)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSummaryMetricMode('percentage')}
+                        className={`px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
+                          summaryMetricMode === 'percentage'
+                            ? 'bg-[#E8AE1F] text-[#15221A] shadow-2xs'
+                            : 'text-[#E3EFE8] hover:text-white'
+                        }`}
+                        title="Scale bars by percentage of faculty"
+                      >
+                        Rate (%)
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-5 sm:p-7 space-y-5">
+                  {/* Interactive Click-to-Filter & Hover-to-Highlight Legend Bar */}
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setActiveSeriesFilter('all')}
+                        className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer border ${
+                          activeSeriesFilter === 'all'
+                            ? 'bg-[#0E3322] text-white border-[#0E3322] shadow-2xs'
+                            : 'bg-white text-[#475569] border-[#E5E9E2] hover:border-[#1E4D2B]'
+                        }`}
+                      >
+                        All 3 Statuses
+                      </button>
+
+                      {/* Ongoing Legend Filter Button (Brand Gold) */}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setActiveSeriesFilter((prev) => (prev === 'ongoing' ? 'all' : 'ongoing'))
+                        }
+                        onMouseEnter={() => setHoveredSeriesKey('ongoing')}
+                        onMouseLeave={() => setHoveredSeriesKey(null)}
+                        className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer border ${
+                          activeSeriesFilter === 'ongoing'
+                            ? 'bg-[#FBF1D2] text-[#8C660B] border-[#E8AE1F] ring-2 ring-[#E8AE1F]/30 shadow-2xs'
+                            : activeSeriesFilter === 'all'
+                            ? 'bg-white text-[#15221A] border-[#E5E9E2] hover:border-[#E8AE1F]'
+                            : 'bg-white/60 text-[#94A3B8] border-[#E5E9E2] opacity-60 hover:opacity-100'
+                        }`}
+                        title="Click to isolate Ongoing Research bars"
+                      >
+                        <span className="w-3.5 h-3.5 rounded-[4px] bg-[#E8AE1F] border border-[#D49B15] shrink-0" />
+                        <span>Ongoing</span>
+                      </button>
+
+                      {/* Completed Legend Filter Button (Brand Forest Green) */}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setActiveSeriesFilter((prev) => (prev === 'completed' ? 'all' : 'completed'))
+                        }
+                        onMouseEnter={() => setHoveredSeriesKey('completed')}
+                        onMouseLeave={() => setHoveredSeriesKey(null)}
+                        className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer border ${
+                          activeSeriesFilter === 'completed'
+                            ? 'bg-[#E3EFE8] text-[#1E4D2B] border-[#1E4D2B] ring-2 ring-[#1E4D2B]/25 shadow-2xs'
+                            : activeSeriesFilter === 'all'
+                            ? 'bg-white text-[#15221A] border-[#E5E9E2] hover:border-[#1E4D2B]'
+                            : 'bg-white/60 text-[#94A3B8] border-[#E5E9E2] opacity-60 hover:opacity-100'
+                        }`}
+                        title="Click to isolate Completed Research bars"
+                      >
+                        <span className="w-3.5 h-3.5 rounded-[4px] bg-[#1E4D2B] shrink-0" />
+                        <span>Completed</span>
+                      </button>
+
+                      {/* Both Legend Filter Button (Brand Deep Pine) */}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setActiveSeriesFilter((prev) => (prev === 'both' ? 'all' : 'both'))
+                        }
+                        onMouseEnter={() => setHoveredSeriesKey('both')}
+                        onMouseLeave={() => setHoveredSeriesKey(null)}
+                        className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer border ${
+                          activeSeriesFilter === 'both'
+                            ? 'bg-[#0E3322] text-white border-[#0E3322] ring-2 ring-[#0E3322]/25 shadow-2xs'
+                            : activeSeriesFilter === 'all'
+                            ? 'bg-white text-[#15221A] border-[#E5E9E2] hover:border-[#0E3322]'
+                            : 'bg-white/60 text-[#94A3B8] border-[#E5E9E2] opacity-60 hover:opacity-100'
+                        }`}
+                        title="Click to isolate Both Ongoing & Completed bars"
+                      >
+                        <span className="w-3.5 h-3.5 rounded-[4px] bg-[#0E3322] shrink-0" />
+                        <span>Both</span>
+                      </button>
+                    </div>
+
+                    <span className="text-[11px] font-medium text-[#64748B]">
+                      {isAllCampuses
+                        ? 'Tip: Click any campus cluster below to view its schools'
+                        : `Showing ${clusters.length} ${clusters.length === 1 ? 'school' : 'schools'} in ${summaryCampus}`}
+                    </span>
+                  </div>
+
+                  {/* Grouped Bar Chart Canvas */}
+                  <div className="bg-white border border-[#E5E9E2] rounded-2xl p-4 sm:p-6 overflow-x-auto custom-table-scrollbar shadow-2xs">
+                    <div className="min-w-[640px]">
+                      {/* Plot Area with Y-Axis and Vertical Bar Clusters */}
+                      <div className="relative h-[330px] flex">
+                        {/* Y-Axis Labels */}
+                        <div className="w-12 pr-2.5 flex flex-col justify-between text-right text-[11px] font-bold text-[#64748B] select-none pb-9">
+                          {yTicks.map((tick) => (
+                            <span key={tick} className="leading-none">
+                              {isPctMode ? `${tick}%` : tick}
+                            </span>
+                          ))}
+                        </div>
+
+                        {/* Gridlines & Clusters Container */}
+                        <div className="flex-1 relative flex flex-col">
+                          {/* Horizontal Gridlines */}
+                          <div className="absolute inset-0 bottom-9 flex flex-col justify-between pointer-events-none">
+                            {yTicks.map((tick, idx) => (
+                              <div
+                                key={tick}
+                                className={`w-full border-b ${
+                                  idx === yTicks.length - 1
+                                    ? 'border-solid border-[#BCC7B9]'
+                                    : 'border-dashed border-[#E5E9E2]'
+                                }`}
+                              />
+                            ))}
+                          </div>
+
+                          {/* Bar Clusters Row */}
+                          <div
+                            className="relative z-10 flex-1 grid items-end pb-9 pt-8 px-2 sm:px-6 gap-3 sm:gap-6"
+                            style={{
+                              gridTemplateColumns: `repeat(${Math.max(1, clusters.length)}, minmax(130px, 1fr))`,
+                            }}
+                          >
+                            {clusters.map((cluster) => {
+                              const isClusterHovered = hoveredClusterId === cluster.id;
+
+                              const allBars = [
+                                {
+                                  key: 'ongoing' as const,
+                                  label: 'Ongoing',
+                                  count: cluster.ongoing,
+                                  pct: cluster.ongoingPct,
+                                  barClass: 'bg-[#E8AE1F] border border-[#D49B15]',
+                                  badgeClass: 'bg-[#FFFBEB] text-[#8C660B] border border-[#FDE68A]',
+                                },
+                                {
+                                  key: 'completed' as const,
+                                  label: 'Completed',
+                                  count: cluster.completed,
+                                  pct: cluster.completedPct,
+                                  barClass: 'bg-[#1E4D2B] border border-[#1E4D2B]',
+                                  badgeClass: 'bg-[#E3EFE8] text-[#1E4D2B] border border-[#1E4D2B]/25',
+                                },
+                                {
+                                  key: 'both' as const,
+                                  label: 'Both',
+                                  count: cluster.both,
+                                  pct: cluster.bothPct,
+                                  barClass: 'bg-[#0E3322] border border-[#0E3322]',
+                                  badgeClass: 'bg-[#0E3322] text-white border border-[#0E3322]',
+                                },
+                              ];
+
+                              const visibleBars =
+                                activeSeriesFilter === 'all'
+                                  ? allBars
+                                  : allBars.filter((b) => b.key === activeSeriesFilter);
+
+                              return (
+                                <div
+                                  key={cluster.id}
+                                  onMouseEnter={() => setHoveredClusterId(cluster.id)}
+                                  onMouseLeave={() => setHoveredClusterId(null)}
+                                  onClick={() => {
+                                    if (isAllCampuses) {
+                                      setSummaryCampus(cluster.id);
+                                      setHoveredClusterId(null);
+                                    }
+                                  }}
+                                  className={`h-full flex flex-col justify-end items-center rounded-xl px-1.5 pt-2 transition-all duration-200 ${
+                                    isAllCampuses ? 'cursor-pointer' : 'cursor-default'
+                                  } ${
+                                    isClusterHovered
+                                      ? 'bg-[#1E4D2B]/8 ring-1 ring-[#1E4D2B]/25'
+                                      : 'hover:bg-[#1E4D2B]/5'
+                                  }`}
+                                  title={
+                                    isAllCampuses
+                                      ? `Click to drill down into ${cluster.label} schools`
+                                      : cluster.label
+                                  }
+                                >
+                                  {/* Side-by-Side Bars inside Cluster */}
+                                  <div className="w-full max-w-[170px] h-full flex items-end justify-center gap-2 sm:gap-3 px-1">
+                                    {visibleBars.map((bar) => {
+                                      const metricVal = isPctMode ? bar.pct : bar.count;
+                                      const heightPct = yMax > 0 ? Math.min(100, (metricVal / yMax) * 100) : 0;
+                                      const isSeriesDimmed =
+                                        hoveredSeriesKey !== null && hoveredSeriesKey !== bar.key;
+                                      const isBarHighlighted =
+                                        isClusterHovered || hoveredSeriesKey === bar.key;
+
+                                      return (
+                                        <div
+                                          key={bar.key}
+                                          onMouseEnter={() => setHoveredSeriesKey(bar.key)}
+                                          onMouseLeave={() => setHoveredSeriesKey(null)}
+                                          className={`flex-1 h-full flex flex-col justify-end items-center transition-opacity duration-200 ${
+                                            isSeriesDimmed ? 'opacity-35' : 'opacity-100'
+                                          }`}
+                                        >
+                                          {/* Branded Pill Value Badge Above Bar */}
+                                          <div
+                                            className={`mb-1.5 text-center transition-transform duration-200 ${
+                                              isBarHighlighted ? 'scale-110 -translate-y-0.5' : ''
+                                            }`}
+                                          >
+                                            <span
+                                              className={`inline-block text-[10.5px] font-extrabold px-1.5 py-0.5 rounded-md shadow-2xs whitespace-nowrap ${bar.badgeClass}`}
+                                            >
+                                              {isPctMode ? `${bar.pct.toFixed(1)}%` : bar.count}
+                                            </span>
+                                            <div className="text-[10px] font-semibold text-[#64748B] mt-0.5">
+                                              {isPctMode ? `${bar.count} fac.` : `${bar.pct.toFixed(1)}%`}
+                                            </div>
+                                          </div>
+
+                                          {/* Vertical Bar */}
+                                          <div
+                                            className={`w-full max-w-[42px] rounded-t-md transition-all duration-300 ${bar.barClass} ${
+                                              isBarHighlighted ? 'brightness-110 shadow-md' : 'shadow-2xs'
+                                            }`}
+                                            style={{
+                                              height: `${metricVal > 0 ? Math.max(6, heightPct) : 2}%`,
+                                              opacity: metricVal > 0 ? 1 : 0.25,
+                                            }}
+                                          />
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          {/* X-Axis Cluster Labels */}
+                          <div
+                            className="h-9 grid items-start pt-2 px-2 sm:px-6 gap-3 sm:gap-6 text-center"
+                            style={{
+                              gridTemplateColumns: `repeat(${Math.max(1, clusters.length)}, minmax(130px, 1fr))`,
+                            }}
+                          >
+                            {clusters.map((cluster) => {
+                              const isClusterHovered = hoveredClusterId === cluster.id;
+                              return (
+                                <button
+                                  key={cluster.id}
+                                  type="button"
+                                  onClick={() => {
+                                    if (isAllCampuses) {
+                                      setSummaryCampus(cluster.id);
+                                      setHoveredClusterId(null);
+                                    }
+                                  }}
+                                  onMouseEnter={() => setHoveredClusterId(cluster.id)}
+                                  onMouseLeave={() => setHoveredClusterId(null)}
+                                  className={`px-1 text-center transition-colors ${
+                                    isAllCampuses ? 'cursor-pointer hover:text-[#1E4D2B]' : 'cursor-default'
+                                  }`}
+                                >
+                                  <div
+                                    className={`text-xs font-extrabold leading-tight truncate ${
+                                      isClusterHovered ? 'text-[#1E4D2B] underline' : 'text-[#0E3322]'
+                                    }`}
+                                    title={cluster.label}
+                                  >
+                                    {cluster.shortLabel}
+                                  </div>
+                                  <div className="text-[10.5px] font-semibold text-[#64748B] mt-0.5">
+                                    {cluster.totalFaculty} faculty
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Interactive Live Inspector & Totals Strip */}
+                  {(() => {
+                    const inspected = hoveredCluster
+                      ? {
+                          title: hoveredCluster.label,
+                          badge: 'Hovered Selection',
+                          totalFaculty: hoveredCluster.totalFaculty,
+                          ongoing: hoveredCluster.ongoing,
+                          ongoingPct: hoveredCluster.ongoingPct,
+                          completed: hoveredCluster.completed,
+                          completedPct: hoveredCluster.completedPct,
+                          both: hoveredCluster.both,
+                          bothPct: hoveredCluster.bothPct,
+                        }
+                      : activeTotalRow
+                      ? {
+                          title: isAllCampuses ? 'Overall Total (All Campuses)' : `${summaryCampus} Total`,
+                          badge: isAllCampuses ? 'Institutional Summary' : 'Campus Summary',
+                          totalFaculty: activeTotalRow.total_faculty,
+                          ongoing: activeTotalRow.ongoing_faculty,
+                          ongoingPct: Number(activeTotalRow.ongoing_percentage) || 0,
+                          completed: activeTotalRow.completed_faculty,
+                          completedPct: Number(activeTotalRow.completed_percentage) || 0,
+                          both: activeTotalRow.both_faculty,
+                          bothPct: Number(activeTotalRow.both_percentage) || 0,
+                        }
+                      : null;
+
+                    if (!inspected) return null;
+
+                    return (
+                      <div className="bg-white border border-[#E5E9E2] rounded-2xl p-4 sm:px-6 flex flex-wrap items-center justify-between gap-4 shadow-2xs transition-all">
+                        <div className="flex flex-wrap items-center gap-2.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-[#E8AE1F] shrink-0" />
+                          <span className="text-xs sm:text-sm font-extrabold text-[#0E3322] uppercase tracking-wide">
+                            {inspected.title}
+                          </span>
+                          <span className="text-xs font-bold text-white bg-[#0E3322] px-3 py-0.5 rounded-full">
+                            {inspected.totalFaculty} Faculty
+                          </span>
+                          <span className="text-[11px] font-semibold text-[#1E4D2B] bg-[#E3EFE8] px-2.5 py-0.5 rounded-full">
+                            {inspected.badge}
+                          </span>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-3 sm:gap-5 text-xs">
+                          <div className="flex items-center gap-2 bg-[#FFFBEB] border border-[#FDE68A] px-3 py-1.5 rounded-xl">
+                            <span className="w-2.5 h-2.5 rounded-[3px] bg-[#E8AE1F] shrink-0" />
+                            <span className="text-[#8C660B] font-semibold">Ongoing:</span>
+                            <span className="font-extrabold text-[#15221A]">
+                              {inspected.ongoing} ({inspected.ongoingPct.toFixed(2)}%)
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 bg-[#E3EFE8]/70 border border-[#1E4D2B]/20 px-3 py-1.5 rounded-xl">
+                            <span className="w-2.5 h-2.5 rounded-[3px] bg-[#1E4D2B] shrink-0" />
+                            <span className="text-[#1E4D2B] font-semibold">Completed:</span>
+                            <span className="font-extrabold text-[#0E3322]">
+                              {inspected.completed} ({inspected.completedPct.toFixed(2)}%)
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 bg-[#F4F6F1] border border-[#CBD5E1] px-3 py-1.5 rounded-xl">
+                            <span className="w-2.5 h-2.5 rounded-[3px] bg-[#0E3322] shrink-0" />
+                            <span className="text-[#0E3322] font-semibold">Both:</span>
+                            <span className="font-extrabold text-[#0E3322]">
+                              {inspected.both} ({inspected.bothPct.toFixed(2)}%)
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* TABLE VIEW — Clean Tabular Presentation */}
+          {summaryViewMode === 'table' && (
+            <div className="overflow-x-auto custom-table-scrollbar border border-[#E2E8F0] rounded-xl">
+              <table className="w-full text-left border-collapse min-w-[860px]">
+                <thead>
+                  <tr className="bg-[#1E4D2B] text-white text-[10.5px] font-bold uppercase tracking-wider divide-x divide-[#2b6d3d] border-b border-[#1E4D2B]">
+                    <th scope="col" className="py-3 pl-4 pr-3">Campus / School</th>
+                    <th scope="col" className="py-3 px-3 text-right">No. of Faculty</th>
+                    <th scope="col" className="py-3 px-3 text-right">Ongoing</th>
+                    <th scope="col" className="py-3 px-2 text-right">%</th>
+                    <th scope="col" className="py-3 px-3 text-right">Completed</th>
+                    <th scope="col" className="py-3 px-2 text-right">%</th>
+                    <th scope="col" className="py-3 px-3 text-right">Both</th>
+                    <th scope="col" className="py-3 pr-4 pl-2 text-right">%</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="text-xs divide-y divide-[#F1F5F9] bg-white">
+                  {displayedSummaryGroups.map((group) => (
+                    <React.Fragment key={group.campusName}>
+                      <tr className="bg-[#FAFBF8] border-y border-[#BCC7B9]/60">
+                        <td colSpan={8} className="py-2.5 px-4">
+                          <div className="font-bold text-[#0E3322] text-xs uppercase tracking-wide flex items-center gap-2">
+                            <span className="inline-block w-2.5 h-2.5 rounded-full bg-[#E8AE1F] shrink-0" />
+                            <span>{group.campusName}</span>
+                          </div>
+                        </td>
+                      </tr>
+                      {group.rows.map((r) => (
+                        <tr key={r.department_or_academic_program} className="hover:bg-[#F8FAFC] transition-colors divide-x divide-[#F1F5F9]">
+                          <td className="py-2.5 pl-6 pr-3 text-[#15221A] font-medium">
+                            {r.department_or_academic_program}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-semibold text-[#15221A]">{r.total_faculty}</td>
+                          <td className="py-2.5 px-3 text-right font-medium text-[#15221A]">{r.ongoing_faculty}</td>
+                          <td className="py-2.5 px-2 text-right text-[#64748B]">{Number(r.ongoing_percentage).toFixed(2)}%</td>
+                          <td className="py-2.5 px-3 text-right font-medium text-[#1E4D2B]">{r.completed_faculty}</td>
+                          <td className="py-2.5 px-2 text-right text-[#64748B]">{Number(r.completed_percentage).toFixed(2)}%</td>
+                          <td className="py-2.5 px-3 text-right font-medium text-[#15221A]">{r.both_faculty}</td>
+                          <td className="py-2.5 pr-4 pl-2 text-right text-[#64748B]">{Number(r.both_percentage).toFixed(2)}%</td>
+                        </tr>
+                      ))}
+                      {group.totalRow && (
+                        <tr className="bg-[#FAFBF8] font-bold text-[#15221A] border-t border-[#E2E8F0] divide-x divide-[#E2E8F0]">
+                          <td className="py-3 pl-6 pr-3 text-[#0E3322]">
+                            {group.campusName} TOTAL
+                          </td>
+                          <td className="py-3 px-3 text-right">{group.totalRow.total_faculty}</td>
+                          <td className="py-3 px-3 text-right text-[#15221A]">{group.totalRow.ongoing_faculty}</td>
+                          <td className="py-3 px-2 text-right">{Number(group.totalRow.ongoing_percentage).toFixed(2)}%</td>
+                          <td className="py-3 px-3 text-right text-[#1E4D2B]">{group.totalRow.completed_faculty}</td>
+                          <td className="py-3 px-2 text-right">{Number(group.totalRow.completed_percentage).toFixed(2)}%</td>
+                          <td className="py-3 px-3 text-right">{group.totalRow.both_faculty}</td>
+                          <td className="py-3 pr-4 pl-2 text-right">{Number(group.totalRow.both_percentage).toFixed(2)}%</td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  ))}
+                  {summaryCampus === 'All campuses' && groupedSummary.grandTotal && (
+                    <tr className="bg-[#E3EFE8] font-extrabold text-[#0E3322] border-t-2 border-[#1E4D2B] divide-x divide-[#BCC7B9]/60">
+                      <td className="py-3.5 pl-4 pr-3 text-sm font-extrabold text-[#0E3322]">
+                        Overall Total
+                      </td>
+                      <td className="py-3.5 px-3 text-right text-sm">{groupedSummary.grandTotal.total_faculty}</td>
+                      <td className="py-3.5 px-3 text-right text-sm text-[#0E3322]">{groupedSummary.grandTotal.ongoing_faculty}</td>
+                      <td className="py-3.5 px-2 text-right">{Number(groupedSummary.grandTotal.ongoing_percentage).toFixed(2)}%</td>
+                      <td className="py-3.5 px-3 text-right text-sm text-[#1E4D2B]">{groupedSummary.grandTotal.completed_faculty}</td>
+                      <td className="py-3.5 px-2 text-right">{Number(groupedSummary.grandTotal.completed_percentage).toFixed(2)}%</td>
+                      <td className="py-3.5 px-3 text-right text-sm">{groupedSummary.grandTotal.both_faculty}</td>
+                      <td className="py-3.5 pr-4 pl-2 text-right">{Number(groupedSummary.grandTotal.both_percentage).toFixed(2)}%</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
 

@@ -386,13 +386,54 @@ export const Form2Page: React.FC = () => {
     const contractual = faculty.filter((f) => f.fullTimeContractual).length;
     const partTime = faculty.filter((f) => f.partTime).length;
     const doctorate = faculty.filter((f) => f.highestDegree === 'Doctorate').length;
-    const master = faculty.filter((f) => f.highestDegree === "Master's").length;
-    const bachelor = faculty.filter((f) => f.highestDegree === "Bachelor's").length;
+    const master = faculty.filter((f) => f.highestDegree === "Master's" || f.highestDegree === "Bachelor's").length;
+    const bachelor = 0;
+
+    // Classify Completed vs Ongoing for Doctorate and Master's degrees
+    const isOngoingDegreeText = (str?: string | null): boolean => {
+      if (!str) return false;
+      return /on[\s-]*going|\bcar\b|\bunits\b|candidate|enrolled|pursuing|in progress|continuing|lack of tor|no tor|less thesis|dissertation|applied\s+for\s+graduation/i.test(
+        str
+      );
+    };
+
+    let completedDoctorate = 0;
+    let ongoingDoctorate = 0;
+    let completedMasters = 0;
+    let ongoingMasters = 0;
+
+    faculty.forEach((f) => {
+      const docStr = (f.doctorateDegree || '').trim();
+      const mastStr = (f.masterDegree || '').trim();
+      const hasDoc = Boolean(docStr && !['none', 'empty', 'null', '-', '—'].includes(docStr.toLowerCase()));
+      const hasMast = Boolean(mastStr && !['none', 'empty', 'null', '-', '—'].includes(mastStr.toLowerCase()));
+
+      if (hasDoc) {
+        if (isOngoingDegreeText(docStr)) {
+          ongoingDoctorate++;
+        } else {
+          completedDoctorate++;
+        }
+      } else if (hasMast) {
+        const parts = mastStr
+          .split(/[\/\n]+/)
+          .map((p) => p.trim())
+          .filter(Boolean);
+        const hasCompletedMasterPart = parts.length > 0 && parts.some((p) => !isOngoingDegreeText(p));
+        if (hasCompletedMasterPart) {
+          completedMasters++;
+        } else {
+          ongoingMasters++;
+        }
+      } else {
+        ongoingMasters++;
+      }
+    });
 
     const docRate = total > 0 ? Math.round((doctorate / total) * 100) : 0;
     const mastRate = total > 0 ? Math.round((master / total) * 100) : 0;
-    const advancedCount = doctorate + master;
-    const advancedRate = total > 0 ? Number(((advancedCount / total) * 100).toFixed(1)) : 0;
+    const advancedCount = total;
+    const advancedRate = 100;
 
     // Ranks distribution (Standard institutional academic ranks)
     const profCount = faculty.filter((f) => f.rankCategory === 'Professor').length;
@@ -411,6 +452,10 @@ export const Form2Page: React.FC = () => {
       doctorate,
       master,
       bachelor,
+      completedDoctorate,
+      ongoingDoctorate,
+      completedMasters,
+      ongoingMasters,
       docRate,
       mastRate,
       advancedCount,
@@ -423,9 +468,26 @@ export const Form2Page: React.FC = () => {
         { label: 'Instructor', count: instCount, pct: Math.round((instCount / maxRank) * 100) }
       ],
       degrees: [
-        { label: 'Doctorate Degree', count: doctorate, pct: total > 0 ? Math.round((doctorate / total) * 100) : 0 },
-        { label: "Master's Degree", count: master, pct: total > 0 ? Math.round((master / total) * 100) : 0 },
-        { label: "Bachelor's Degree", count: bachelor, pct: total > 0 ? Math.round((bachelor / total) * 100) : 0 }
+        {
+          label: 'Completed Doctorate',
+          count: completedDoctorate,
+          pct: total > 0 ? Math.round((completedDoctorate / total) * 100) : 0
+        },
+        {
+          label: 'Ongoing Doctorate',
+          count: ongoingDoctorate,
+          pct: total > 0 ? Math.round((ongoingDoctorate / total) * 100) : 0
+        },
+        {
+          label: "Completed Master's",
+          count: completedMasters,
+          pct: total > 0 ? Math.round((completedMasters / total) * 100) : 0
+        },
+        {
+          label: "Ongoing Master's",
+          count: ongoingMasters,
+          pct: total > 0 ? Math.max(4, Math.round((ongoingMasters / total) * 100)) : 0
+        }
       ]
     };
   }, [faculty]);
@@ -481,13 +543,13 @@ export const Form2Page: React.FC = () => {
             <div className="text-4xl font-extrabold text-[#0E3322]">
               {loading ? '...' : stats.doctorate}
             </div>
-            <div className="text-xs font-medium text-[#64748B] mt-1.5">With doctorate degree</div>
+            <div className="text-xs font-medium text-[#64748B] mt-1.5">With doctorate degree (completed &amp; ongoing)</div>
           </div>
           <div className="bg-white border border-[#E5E9E2] border-t-[5px] border-t-[#E8AE1F] rounded-[18px] p-6 shadow-sm">
             <div className="text-4xl font-extrabold text-[#0E3322]">
               {loading ? '...' : stats.master}
             </div>
-            <div className="text-xs font-medium text-[#64748B] mt-1.5">With master's degree</div>
+            <div className="text-xs font-medium text-[#64748B] mt-1.5">With master&apos;s degree (completed &amp; ongoing)</div>
           </div>
           <div className="bg-white border border-[#E5E9E2] border-t-[5px] border-t-[#E8AE1F] rounded-[18px] p-6 shadow-sm">
             <div className="text-4xl font-extrabold text-[#0E3322]">
@@ -543,7 +605,7 @@ export const Form2Page: React.FC = () => {
               </div>
               <div className="w-full border-b border-dashed border-[#CBD5E1] mb-5" />
 
-              <div className="space-y-4 text-xs">
+              <div className="space-y-3.5 text-xs">
                 {stats.degrees.map((item) => (
                   <div key={item.label} className="flex items-center justify-between gap-4">
                     <span className="text-[#334155] font-semibold w-40 shrink-0">{item.label}</span>
@@ -564,7 +626,7 @@ export const Form2Page: React.FC = () => {
             <div className="mt-6 pt-3 border-t border-[#E2E8F0] flex items-center justify-between">
               <div>
                 <span className="text-xs font-bold text-[#0E3322] block">Postgraduate Faculty Total</span>
-                <span className="text-[11px] text-[#64748B]">Doctorate &amp; Master&apos;s degree holders</span>
+                <span className="text-[11px] text-[#64748B]">Completed &amp; ongoing Doctorate and Master&apos;s degrees</span>
               </div>
               <span className="text-sm font-extrabold text-[#1E4D2B] bg-[#F4F6F1] px-3.5 py-1 rounded-full border border-[#E2E8F0]">
                 {stats.advancedCount} of {stats.total}

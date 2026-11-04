@@ -968,7 +968,7 @@ export const Form1Page: React.FC = () => {
                       <div
                         className="bg-[#1E4D2B] h-full rounded-full transition-all duration-500"
                         style={{
-                          width: `${Math.min(100, Math.max(8, (summaryMetrics.undergradEnrollment / (summaryMetrics.undergradEnrollment || 1)) * 100))}%`
+                          width: `${Math.min(100, Math.max(8, (summaryMetrics.undergradEnrollment / (summaryMetrics.totalEnrollment || 1)) * 100))}%`
                         }}
                       />
                     </div>
@@ -988,7 +988,7 @@ export const Form1Page: React.FC = () => {
                       <div
                         className="bg-[#1E4D2B] h-full rounded-full transition-all duration-500"
                         style={{
-                          width: `${Math.min(100, Math.max(6, (summaryMetrics.masteralEnrollment / (summaryMetrics.undergradEnrollment || 1)) * 100))}%`
+                          width: `${Math.min(100, Math.max(6, (summaryMetrics.masteralEnrollment / (summaryMetrics.totalEnrollment || 1)) * 100))}%`
                         }}
                       />
                     </div>
@@ -1008,7 +1008,7 @@ export const Form1Page: React.FC = () => {
                       <div
                         className="bg-[#1E4D2B] h-full rounded-full transition-all duration-500"
                         style={{
-                          width: `${Math.min(100, Math.max(5, (summaryMetrics.doctoralEnrollment / (summaryMetrics.undergradEnrollment || 1)) * 100))}%`
+                          width: `${Math.min(100, Math.max(5, (summaryMetrics.doctoralEnrollment / (summaryMetrics.totalEnrollment || 1)) * 100))}%`
                         }}
                       />
                     </div>
@@ -1053,7 +1053,7 @@ export const Form1Page: React.FC = () => {
                       <div
                         className="bg-[#1E4D2B] h-full rounded-full transition-all duration-500"
                         style={{
-                          width: `${Math.min(100, Math.max(12, (summaryMetrics.undergradCount / (summaryMetrics.undergradCount || 1)) * 100))}%`
+                          width: `${Math.min(100, Math.max(12, (summaryMetrics.undergradCount / (summaryMetrics.totalCount || 1)) * 100))}%`
                         }}
                       />
                     </div>
@@ -1073,7 +1073,7 @@ export const Form1Page: React.FC = () => {
                       <div
                         className="bg-[#1E4D2B] h-full rounded-full transition-all duration-500"
                         style={{
-                          width: `${Math.min(100, Math.max(8, (summaryMetrics.masteralCount / (summaryMetrics.undergradCount || 1)) * 100))}%`
+                          width: `${Math.min(100, Math.max(8, (summaryMetrics.masteralCount / (summaryMetrics.totalCount || 1)) * 100))}%`
                         }}
                       />
                     </div>
@@ -1093,7 +1093,7 @@ export const Form1Page: React.FC = () => {
                       <div
                         className="bg-[#1E4D2B] h-full rounded-full transition-all duration-500"
                         style={{
-                          width: `${Math.min(100, Math.max(6, (summaryMetrics.doctoralCount / (summaryMetrics.undergradCount || 1)) * 100))}%`
+                          width: `${Math.min(100, Math.max(6, (summaryMetrics.doctoralCount / (summaryMetrics.totalCount || 1)) * 100))}%`
                         }}
                       />
                     </div>
