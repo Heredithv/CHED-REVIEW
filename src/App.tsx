@@ -3,15 +3,15 @@ import { Header } from './components/Header';
 import { Footer } from './components/Footer';
 import { HomePage } from './pages/HomePage';
 import { RequirementsPage } from './pages/RequirementsPage';
-import { Form1Page } from './pages/Form1Page';
-import { Form2Page } from './pages/Form2Page';
-import { Form3Page } from './pages/Form3Page';
-import { Form4Page } from './pages/Form4Page';
-import { Form5Page } from './pages/Form5Page';
-import { Form6Page } from './pages/Form6Page';
-import { Form7Page } from './pages/Form7Page';
-import { Form8Page } from './pages/Form8Page';
-import { ProgramsPage } from './pages/ProgramsPage';
+import { Form1Page, preloadForm1Data } from './pages/Form1Page';
+import { Form2Page, preloadForm2Data } from './pages/Form2Page';
+import { Form3Page, preloadForm3Data } from './pages/Form3Page';
+import { Form4Page, preloadForm4Data } from './pages/Form4Page';
+import { Form5Page, preloadForm5Data } from './pages/Form5Page';
+import { Form6Page, preloadForm6Data } from './pages/Form6Page';
+import { Form7Page, preloadForm7Data } from './pages/Form7Page';
+import { Form8Page, preloadForm8Data } from './pages/Form8Page';
+import { ProgramsPage, preloadProgramsData } from './pages/ProgramsPage';
 
 export function initAnimations() {
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
@@ -47,45 +47,25 @@ export function initAnimations() {
   }, { threshold: 0.08, rootMargin: '0px 0px -30px 0px' });
 
   document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
-
-  // Counter animation on stats numbers
-  function easeOut(t: number) { return 1 - Math.pow(1 - t, 3); }
-  function runCounter(el: HTMLElement, target: number) {
-    const start = performance.now();
-    const duration = 1400;
-    function tick(now: number) {
-      const p = Math.min((now - start) / duration, 1);
-      el.textContent = Math.round(easeOut(p) * target).toLocaleString();
-      if (p < 1) requestAnimationFrame(tick);
-      else el.textContent = target.toLocaleString();
-    }
-    requestAnimationFrame(tick);
-  }
-
-  const statEls = document.querySelectorAll<HTMLElement>('.strip b, .stats b');
-  if (statEls.length > 0) {
-    statEls.forEach(el => {
-      const val = parseInt(el.textContent?.replace(/[^0-9]/g, '') || '0', 10);
-      if (!isNaN(val) && val > 0) el.dataset.target = String(val);
-    });
-    const counterObserver = new IntersectionObserver((entries) => {
-      entries.forEach(e => {
-        if (e.isIntersecting) {
-          statEls.forEach(el => {
-            if (el.dataset.target) runCounter(el, parseInt(el.dataset.target, 10));
-          });
-          counterObserver.disconnect();
-        }
-      });
-    }, { threshold: 0.4 });
-    counterObserver.observe(statEls[0].closest('div') || statEls[0]);
-  }
 }
 
 export function App() {
   const [currentHash, setCurrentHash] = useState<string>(window.location.hash || '#home');
 
   useEffect(() => {
+    // Eagerly pre-load Forms 1 to 8 into memory & local cache so tab switching is instantaneous
+    preloadForm1Data();
+    const preloadTimer = setTimeout(() => {
+      preloadForm2Data();
+      preloadForm3Data();
+      preloadForm4Data();
+      preloadForm5Data();
+      preloadForm6Data();
+      preloadForm7Data();
+      preloadForm8Data();
+      preloadProgramsData();
+    }, 100);
+
     // Ensure font preset is applied immediately
     const savedFont = localStorage.getItem('jhcsc_font') || 'poppins';
     document.documentElement.setAttribute('data-font', savedFont);
@@ -95,7 +75,12 @@ export function App() {
       setCurrentHash(hash);
 
       // Smooth scroll if hash is an in-page anchor on home
-      if (hash.startsWith('#about') || hash.startsWith('#reviews') || hash.startsWith('#forms')) {
+      if (
+        hash.startsWith('#about') ||
+        hash.startsWith('#reviews') ||
+        hash.startsWith('#forms') ||
+        hash.startsWith('#map')
+      ) {
         const targetId = hash.replace('#', '').split('?')[0];
         setTimeout(() => {
           const elem = document.getElementById(targetId);

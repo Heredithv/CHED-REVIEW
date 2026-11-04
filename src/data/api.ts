@@ -47,28 +47,60 @@ export interface SupabaseConfig {
   schema: string;
 }
 
+function normalizeSupabaseUrl(url: string): string {
+  if (!url) return NEW_SUPABASE_URL;
+  let cleaned = url.trim().replace(/\/rest\/v1\/?$/, '').replace(/\/+$/, '');
+  if (cleaned.includes('cpiazhhkkzwbcjsuhapr') || !cleaned.includes('wvonwulrshllpcngveaw')) {
+    cleaned = NEW_SUPABASE_URL;
+  }
+  return cleaned;
+}
+
+export const NEW_SUPABASE_URL = 'https://wvonwulrshllpcngveaw.supabase.co';
+export const NEW_SUPABASE_ANON_KEY = 'sb_publishable_Gi8d1TN9ECPI84apyy6U6w_m8lDBP9B';
+
 export function getSupabaseConfig(): SupabaseConfig {
-  const envUrl = import.meta.env.VITE_SUPABASE_URL || 'https://cpiazhhkkzwbcjsuhapr.supabase.co';
-  const envKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_9kz5P-L4PhYlc7-il39bug_JaEWl74-';
+  if (typeof window !== 'undefined') {
+    const storedUrl = localStorage.getItem('VITE_SUPABASE_URL');
+    if (storedUrl && (storedUrl.includes('cpiazhhkkzwbcjsuhapr') || !storedUrl.includes('wvonwulrshllpcngveaw'))) {
+      localStorage.removeItem('VITE_SUPABASE_URL');
+      localStorage.removeItem('VITE_SUPABASE_ANON_KEY');
+      localStorage.removeItem('jhcsc_form1_persistent_cache_v2');
+      localStorage.removeItem('jhcsc_form1_persistent_cache');
+      localStorage.removeItem('jhcsc_form1_cache');
+      localStorage.removeItem('jhcsc_form1_last_synced_v2');
+      sessionStorage.removeItem('jhcsc_form1_cache');
+    }
+  }
+
+  const envUrl = import.meta.env.VITE_SUPABASE_URL || NEW_SUPABASE_URL;
+  const envKey = import.meta.env.VITE_SUPABASE_ANON_KEY || NEW_SUPABASE_ANON_KEY;
   const envSchema = import.meta.env.VITE_SUPABASE_SCHEMA || 'public';
 
   const storedUrl = typeof window !== 'undefined' ? localStorage.getItem('VITE_SUPABASE_URL') : null;
   const storedKey = typeof window !== 'undefined' ? localStorage.getItem('VITE_SUPABASE_ANON_KEY') : null;
   const storedSchema = typeof window !== 'undefined' ? localStorage.getItem('VITE_SUPABASE_SCHEMA') : null;
 
+  const rawChosenUrl = (storedUrl !== null ? storedUrl : envUrl).trim();
+  const rawChosenKey = (storedKey !== null ? storedKey : envKey).trim();
+
   return {
-    url: (storedUrl !== null ? storedUrl : envUrl).trim(),
-    key: (storedKey !== null ? storedKey : envKey).trim(),
+    url: normalizeSupabaseUrl(rawChosenUrl),
+    key: rawChosenKey || NEW_SUPABASE_ANON_KEY,
     schema: (storedSchema !== null ? storedSchema : envSchema).trim() || 'public',
   };
 }
 
 export function saveSupabaseConfig(config: SupabaseConfig): void {
   if (typeof window !== 'undefined') {
-    localStorage.setItem('VITE_SUPABASE_URL', config.url.trim());
+    const cleanUrl = normalizeSupabaseUrl(config.url);
+    localStorage.setItem('VITE_SUPABASE_URL', cleanUrl);
     localStorage.setItem('VITE_SUPABASE_ANON_KEY', config.key.trim());
     localStorage.setItem('VITE_SUPABASE_SCHEMA', config.schema.trim() || 'public');
-    // Invalidate client cache
+    // Invalidate client cache and cached form data
+    localStorage.removeItem('jhcsc_form1_persistent_cache_v2');
+    localStorage.removeItem('jhcsc_form1_last_synced_v2');
+    sessionStorage.removeItem('jhcsc_form1_cache');
     cachedClients = {};
   }
 }
@@ -78,6 +110,9 @@ export function clearSupabaseConfig(): void {
     localStorage.removeItem('VITE_SUPABASE_URL');
     localStorage.removeItem('VITE_SUPABASE_ANON_KEY');
     localStorage.removeItem('VITE_SUPABASE_SCHEMA');
+    localStorage.removeItem('jhcsc_form1_persistent_cache_v2');
+    localStorage.removeItem('jhcsc_form1_last_synced_v2');
+    sessionStorage.removeItem('jhcsc_form1_cache');
     cachedClients = {};
   }
 }
@@ -85,18 +120,15 @@ export function clearSupabaseConfig(): void {
 let cachedClients: Record<string, any> = {};
 
 export function getSupabaseClient(customSchema?: string): any {
-  const config = getSupabaseConfig();
-  if (!config.url || !config.key) return null;
-
-  const targetSchema = customSchema || config.schema || 'public';
-  const cacheKey = `${config.url}_${targetSchema}`;
+  const targetSchema = customSchema || 'public';
+  const cacheKey = `${NEW_SUPABASE_URL}_${targetSchema}`;
 
   if (cachedClients[cacheKey]) {
     return cachedClients[cacheKey];
   }
 
   try {
-    const client = createClient(config.url, config.key, {
+    const client = createClient(NEW_SUPABASE_URL, NEW_SUPABASE_ANON_KEY, {
       db: {
         schema: targetSchema,
       },
@@ -104,6 +136,12 @@ export function getSupabaseClient(customSchema?: string): any {
         persistSession: false,
         autoRefreshToken: false,
       },
+      global: {
+        headers: {
+          'apikey': NEW_SUPABASE_ANON_KEY,
+          'Accept': 'application/json'
+        }
+      }
     });
     cachedClients[cacheKey] = client;
     return client;
@@ -190,12 +228,13 @@ export async function testSupabaseConnection(
   }
 
   try {
-    const client = createClient(url, key, {
+    const cleanUrl = normalizeSupabaseUrl(url);
+    const client = createClient(cleanUrl, key, {
       db: { schema: schema || 'public' },
       auth: { persistSession: false, autoRefreshToken: false },
     });
 
-    const knownTables = ['campuses', 'programs', 'institutional_forms', 'form1_program_offerings', 'form2_faculty_profiles'];
+    const knownTables = ['form1', 'form2', 'form3', 'form4_summary', 'form4_detailed', 'form5', 'form6', 'form7', 'form8', 'campuses', 'programs', 'institutional_forms', 'form1_program_offerings', 'form2_faculty_profiles'];
     const tablesFound: string[] = [];
 
     for (const table of knownTables) {
@@ -214,7 +253,7 @@ export async function testSupabaseConnection(
     } else {
       // Try public schema if custom schema returned 0 tables
       if (schema !== 'public') {
-        const publicClient = createClient(url, key, {
+        const publicClient = createClient(cleanUrl, key, {
           db: { schema: 'public' },
           auth: { persistSession: false, autoRefreshToken: false },
         });
@@ -342,73 +381,69 @@ export async function getForm3Summary(): Promise<ApiResponse<any[]>> {
 }
 
 // ==============================================================================
-// 14. Form 4: Research Expenditures view (Core Template)
+// 14. Form 4: Summary & Detailed views
 // ==============================================================================
+export async function getForm4Summary(): Promise<ApiResponse<any[]>> {
+  return fetchView<any[]>('form4_summary', FORM4_RESEARCH_EXPENDITURES);
+}
+
+export async function getForm4Detailed(): Promise<ApiResponse<any[]>> {
+  return fetchView<any[]>('form4_detailed', FORM4_RESEARCH_EXPENDITURES);
+}
+
 export async function getForm4ResearchExpenditures(): Promise<ApiResponse<Form4Expenditure[]>> {
-  return fetchView<Form4Expenditure[]>('form4_research_expenditures', FORM4_RESEARCH_EXPENDITURES);
+  return fetchView<Form4Expenditure[]>('form4_summary', FORM4_RESEARCH_EXPENDITURES);
 }
 
 // ==============================================================================
 // 15. Form 4: Research Funding view
 // ==============================================================================
 export async function getForm4ResearchFunding(): Promise<ApiResponse<Form4FundingGrant[]>> {
-  return fetchView<Form4FundingGrant[]>('form4_research_funding', FORM4_RESEARCH_FUNDING);
+  return fetchView<Form4FundingGrant[]>('form4_detailed', FORM4_RESEARCH_FUNDING);
 }
 
 // ==============================================================================
-// 16. Form 5: Requirements view
+// 16. Form 5: Requirements & Evidences views
 // ==============================================================================
 export async function getForm5Requirements(): Promise<ApiResponse<Form5ResourceItem[]>> {
-  return fetchView<Form5ResourceItem[]>('form5_requirements', FORM5_RESOURCES);
+  return fetchView<Form5ResourceItem[]>('form5', FORM5_RESOURCES);
 }
 
-// ==============================================================================
-// 17. Form 5: Responses view
-// ==============================================================================
 export async function getForm5Responses(): Promise<ApiResponse<any[]>> {
-  return fetchView<any[]>('form5_responses', []);
+  return fetchView<any[]>('form5_evidences', []);
 }
 
 // ==============================================================================
-// 18. Form 6: Requirements view
+// 18. Form 6: Student Affairs & Services (form6 & form6_evidences)
 // ==============================================================================
-export async function getForm6Requirements(): Promise<ApiResponse<Form6SupportItem[]>> {
-  return fetchView<Form6SupportItem[]>('form6_requirements', FORM6_SUPPORT);
+export async function getForm6Requirements(): Promise<ApiResponse<any[]>> {
+  return fetchView<any[]>('form6', []);
 }
 
-// ==============================================================================
-// 19. Form 6: Responses view
-// ==============================================================================
 export async function getForm6Responses(): Promise<ApiResponse<any[]>> {
-  return fetchView<any[]>('form6_responses', []);
+  return fetchView<any[]>('form6_evidences', []);
 }
 
-// ==============================================================================
-// 20. Form 6: General Support Structures view
-// ==============================================================================
 export async function getForm6GeneralSupportStructures(): Promise<ApiResponse<any[]>> {
-  return fetchView<any[]>('form6_general_support_structures', FORM6_SUPPORT);
+  return fetchView<any[]>('form6', []);
 }
 
-// ==============================================================================
-// 21. Form 6: Special Support Structures view
-// ==============================================================================
 export async function getForm6SpecialSupportStructures(): Promise<ApiResponse<any[]>> {
-  return fetchView<any[]>('form6_special_support_structures', []);
+  return fetchView<any[]>('form6_evidences', []);
 }
 
 // ==============================================================================
-// 22. Form 7: Research Linkages view
+// 22. Form 7: Research Linkages view (form7)
 // ==============================================================================
-export async function getForm7ResearchLinkages(): Promise<ApiResponse<Form7Linkage[]>> {
-  return fetchView<Form7Linkage[]>('form7_research_linkages', FORM7_LINKAGES);
+export async function getForm7ResearchLinkages(): Promise<ApiResponse<any[]>> {
+  return fetchView<any[]>('form7', []);
 }
 
 // ==============================================================================
-// 23. Form 8: Outreach Programs view
+// 23. Form 8: Outreach Programs view (form8)
 // ==============================================================================
 export async function getForm8OutreachPrograms(): Promise<ApiResponse<Form8Outreach[]>> {
-  return fetchView<Form8Outreach[]>('form8_outreach_programs', FORM8_OUTREACH);
+  return fetchView<Form8Outreach[]>('form8', []);
 }
 
 // ==============================================================================

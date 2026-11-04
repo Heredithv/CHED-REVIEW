@@ -59,15 +59,7 @@ export function useGoogleSheet<T = any>(
 
   useEffect(() => {
     fetchSheetData();
-
-    // Auto refresh interval (default 60s)
-    const intervalTime = options?.autoRefreshInterval || 60000;
-    const interval = setInterval(() => {
-      fetchSheetData();
-    }, intervalTime);
-
-    return () => clearInterval(interval);
-  }, [fetchSheetData, options?.autoRefreshInterval]);
+  }, [fetchSheetData]);
 
   const refreshNow = () => {
     fetchSheetData();

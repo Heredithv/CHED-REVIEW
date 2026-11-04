@@ -70,6 +70,7 @@ export function parseDriveUrl(url: string, fallbackTitle?: string): Omit<DriveFi
 
   // Match Google Drive folder: /drive/folders/{id}
   const folderMatch = url.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  const isFolder = Boolean(folderMatch);
   if (folderMatch) {
     fileId = folderMatch[1];
     fileType = 'drive';
@@ -79,7 +80,9 @@ export function parseDriveUrl(url: string, fallbackTitle?: string): Omit<DriveFi
   let thumbnailUrl: string | undefined = undefined;
 
   if (fileId) {
-    if (fileType === 'doc') {
+    if (isFolder) {
+      previewUrl = `https://drive.google.com/embeddedfolderview?id=${fileId}#list`;
+    } else if (fileType === 'doc') {
       previewUrl = `https://docs.google.com/document/d/${fileId}/preview`;
     } else if (fileType === 'sheet') {
       previewUrl = `https://docs.google.com/spreadsheets/d/${fileId}/preview`;
@@ -88,7 +91,13 @@ export function parseDriveUrl(url: string, fallbackTitle?: string): Omit<DriveFi
     } else {
       previewUrl = `https://drive.google.com/file/d/${fileId}/preview`;
     }
-    thumbnailUrl = `https://lh3.googleusercontent.com/d/${fileId}=w400`;
+    if (!isFolder) {
+      thumbnailUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w600`;
+    }
+  } else if (url.trim().includes('/view')) {
+    previewUrl = url.trim().replace(/\/view(\?.*)?$/, '/preview');
+  } else {
+    previewUrl = url.trim();
   }
 
   return {
@@ -223,8 +232,8 @@ export function parseCellDriveInfo(
     return {
       ...parsed,
       fileId: resolvedId,
-      previewUrl: resolvedId ? `https://drive.google.com/file/d/${resolvedId}/preview` : parsed.previewUrl,
-      thumbnailUrl: resolvedId ? `https://lh3.googleusercontent.com/d/${resolvedId}=w400` : parsed.thumbnailUrl,
+      previewUrl: parsed.previewUrl || (resolvedId ? `https://drive.google.com/file/d/${resolvedId}/preview` : explicitUrl.trim()),
+      thumbnailUrl: parsed.thumbnailUrl || (resolvedId ? `https://drive.google.com/thumbnail?id=${resolvedId}&sz=w600` : undefined),
       label: trimmed,
       fileTitle: trimmed,
       isPlain: false
@@ -270,7 +279,7 @@ export function parseCellDriveInfo(
         ...parsed,
         fileId: resolvedId,
         previewUrl: resolvedId ? `https://drive.google.com/file/d/${resolvedId}/preview` : parsed.previewUrl,
-        thumbnailUrl: resolvedId ? `https://lh3.googleusercontent.com/d/${resolvedId}=w400` : parsed.thumbnailUrl,
+        thumbnailUrl: resolvedId ? `https://drive.google.com/thumbnail?id=${resolvedId}&sz=w600` : parsed.thumbnailUrl,
         label: trimmed,
         fileTitle: match.file_name || trimmed,
         isPlain: false
@@ -286,3 +295,15 @@ export function parseCellDriveInfo(
     isPlain: true
   };
 }
+
+// Fast image thumbnail preloader cache
+const preloadedThumbnails = new Set<string>();
+
+export function preloadDriveThumbnail(thumbnailUrl?: string) {
+  if (!thumbnailUrl || typeof window === 'undefined' || preloadedThumbnails.has(thumbnailUrl)) return;
+  preloadedThumbnails.add(thumbnailUrl);
+  const img = new Image();
+  img.decoding = 'async';
+  img.src = thumbnailUrl;
+}
+

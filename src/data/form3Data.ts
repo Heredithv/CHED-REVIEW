@@ -19,7 +19,7 @@ export const form3PageData = {
   breadcrumbHome: "Home",
   breadcrumbCurrent: "Form 3",
   title: "Form 3: Research involvement",
-  subtitle: "107 of 222 full-time faculty (48%) have ongoing or completed research. CMO No. 46 asks for at least 45, which is 20% of all full-time faculty.",
+  subtitle: "Listing of full-time faculty research involvement across all campuses, including ongoing studies, completed research papers, and publication citations.",
   subtitleHighlight: "107 of 222",
   exportButtonText: "Export to Excel",
   exportFileName: "Form-3-Research-Involvement.xlsx",

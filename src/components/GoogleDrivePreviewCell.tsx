@@ -1,7 +1,12 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { ExternalLink, Copy, Check, FileText, FileSpreadsheet, Eye, File } from 'lucide-react';
-import { parseCellDriveInfo, DriveFileInfo, EvidenceFile } from '../utils/googleDrivePreview';
+import { ExternalLink, FileText, Loader2, Globe } from 'lucide-react';
+import {
+  parseCellDriveInfo,
+  DriveFileInfo,
+  EvidenceFile,
+  preloadDriveThumbnail
+} from '../utils/googleDrivePreview';
 
 interface GoogleDrivePreviewCellProps {
   text?: string | null;
@@ -9,7 +14,38 @@ interface GoogleDrivePreviewCellProps {
   explicitFileId?: string | null;
   evidenceFiles?: EvidenceFile[];
   className?: string;
+  iconClassName?: string;
   columnType?: 'major' | 'authority' | 'copc' | 'general';
+  variant?: 'light' | 'dark' | 'badge';
+}
+
+// Bounded LRU pool of active/pre-warmed iframe instances to keep memory light while making previews instant
+const MAX_ACTIVE_IFRAMES = 8;
+const activeIframeListeners = new Map<symbol, () => void>();
+const activeIframeOrder: symbol[] = [];
+
+function registerActiveIframe(id: symbol, evictCallback: () => void) {
+  const existingIdx = activeIframeOrder.indexOf(id);
+  if (existingIdx !== -1) {
+    activeIframeOrder.splice(existingIdx, 1);
+  }
+  activeIframeOrder.push(id);
+  activeIframeListeners.set(id, evictCallback);
+
+  while (activeIframeOrder.length > MAX_ACTIVE_IFRAMES) {
+    const oldest = activeIframeOrder.shift();
+    if (oldest && oldest !== id) {
+      const cb = activeIframeListeners.get(oldest);
+      activeIframeListeners.delete(oldest);
+      if (cb) cb();
+    }
+  }
+}
+
+function unregisterActiveIframe(id: symbol) {
+  const idx = activeIframeOrder.indexOf(id);
+  if (idx !== -1) activeIframeOrder.splice(idx, 1);
+  activeIframeListeners.delete(id);
 }
 
 export const GoogleDrivePreviewCell: React.FC<GoogleDrivePreviewCellProps> = ({
@@ -18,260 +54,175 @@ export const GoogleDrivePreviewCell: React.FC<GoogleDrivePreviewCellProps> = ({
   explicitFileId,
   evidenceFiles,
   className = '',
-  columnType = 'general'
+  iconClassName = '',
+  variant = 'light'
 }) => {
   const triggerRef = useRef<HTMLSpanElement>(null);
-  const popoverRef = useRef<HTMLDivElement>(null);
-
-  const [isOpen, setIsOpen] = useState(false);
-  const [coords, setCoords] = useState<{ top: number; left: number; showAbove: boolean }>({
+  const instanceIdRef = useRef<symbol>(Symbol('drive-preview'));
+  const [isHovered, setIsHovered] = useState<boolean>(false);
+  const [isPrewarmed, setIsPrewarmed] = useState<boolean>(false);
+  const [iframeLoaded, setIframeLoaded] = useState<boolean>(false);
+  const [thumbError, setThumbError] = useState<boolean>(false);
+  const [coords, setCoords] = useState<{ top: number; left: number; placeBelow: boolean }>({
     top: 0,
     left: 0,
-    showAbove: false
+    placeBelow: false
   });
-  const [copied, setCopied] = useState(false);
-  const [iframeLoaded, setIframeLoaded] = useState(false);
-  const [imgError, setImgError] = useState(false);
 
-  const openTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const closeTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const exitTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Parse text, explicit URL, explicit file ID, or evidenceFiles
   const info: DriveFileInfo = React.useMemo(() => {
     return parseCellDriveInfo(text, explicitUrl, explicitFileId, evidenceFiles);
   }, [text, explicitUrl, explicitFileId, evidenceFiles]);
 
-  // If plain text with no link, render plain text directly with zero popover overhead
+  const activatePrewarm = useCallback(() => {
+    if (info.thumbnailUrl) {
+      preloadDriveThumbnail(info.thumbnailUrl);
+    }
+    setIsPrewarmed(true);
+    registerActiveIframe(instanceIdRef.current, () => {
+      setIsPrewarmed(false);
+      setIframeLoaded(false);
+    });
+  }, [info.thumbnailUrl]);
+
+  // Preload fast thumbnail when near viewport & pre-warm iframe when user's mouse enters parent Card or Table Row
+  useEffect(() => {
+    const el = triggerRef.current;
+    if (!el || !info.hasLink || info.isPlain || !info.url) return;
+
+    // 1. Preload lightweight thumbnail image as soon as cell approaches viewport
+    let observer: IntersectionObserver | null = null;
+    if (info.thumbnailUrl && typeof IntersectionObserver !== 'undefined') {
+      observer = new IntersectionObserver(
+        (entries) => {
+          if (entries.some((e) => e.isIntersecting)) {
+            preloadDriveThumbnail(info.thumbnailUrl);
+            observer?.disconnect();
+          }
+        },
+        { rootMargin: '400px' }
+      );
+      observer.observe(el);
+    }
+
+    // 2. Pre-warm the interactive iframe when mouse enters the enclosing Card or Table Row
+    const parentBlock =
+      el.closest('tr, [data-program-card]') ||
+      el.parentElement?.parentElement?.parentElement;
+
+    const handleParentEnter = () => {
+      activatePrewarm();
+    };
+
+    if (parentBlock) {
+      parentBlock.addEventListener('mouseenter', handleParentEnter, { passive: true });
+    }
+
+    return () => {
+      observer?.disconnect();
+      if (parentBlock) {
+        parentBlock.removeEventListener('mouseenter', handleParentEnter);
+      }
+      unregisterActiveIframe(instanceIdRef.current);
+    };
+  }, [info.hasLink, info.isPlain, info.url, info.thumbnailUrl, activatePrewarm]);
+
+  const updatePosition = useCallback(() => {
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const popoverWidth = Math.min(360, window.innerWidth - 24);
+    const popoverHeight = 305;
+
+    const placeBelow = rect.top < popoverHeight + 20;
+
+    const top = placeBelow ? rect.bottom + 8 : rect.top - popoverHeight - 8;
+    let left = rect.left + rect.width / 2 - popoverWidth / 2;
+
+    left = Math.max(12, Math.min(window.innerWidth - popoverWidth - 12, left));
+
+    setCoords({ top, left, placeBelow });
+  }, []);
+
+  const handleMouseEnter = () => {
+    if (exitTimerRef.current) {
+      clearTimeout(exitTimerRef.current);
+      exitTimerRef.current = null;
+    }
+    activatePrewarm();
+    updatePosition();
+    setIsHovered(true);
+  };
+
+  const handleMouseLeave = () => {
+    exitTimerRef.current = setTimeout(() => {
+      setIsHovered(false);
+    }, 180);
+  };
+
+  useEffect(() => {
+    if (isHovered) {
+      updatePosition();
+      window.addEventListener('scroll', updatePosition, true);
+      window.addEventListener('resize', updatePosition);
+    }
+    return () => {
+      window.removeEventListener('scroll', updatePosition, true);
+      window.removeEventListener('resize', updatePosition);
+    };
+  }, [isHovered, updatePosition]);
+
+  useEffect(() => {
+    return () => {
+      if (exitTimerRef.current) clearTimeout(exitTimerRef.current);
+    };
+  }, []);
+
+  // If plain text with no link, render plain text directly with natural multi-line wrapping
   if (!info.hasLink || info.isPlain || !info.url) {
     if (!text || !text.trim()) {
       return null;
     }
-    return <span className={className}>{text}</span>;
+    return (
+      <span className={`break-words [overflow-wrap:anywhere] whitespace-normal ${className}`}>
+        {text}
+      </span>
+    );
   }
 
-  const updateCoordinates = () => {
-    if (!triggerRef.current) return;
-    const rect = triggerRef.current.getBoundingClientRect();
-    const popoverHeight = 270;
-    const popoverWidth = 310;
+  const isGoogleDrive =
+    info.url.includes('drive.google.com') || info.url.includes('docs.google.com');
+  const isFolder = info.url.includes('/folders/');
 
-    const spaceBelow = window.innerHeight - rect.bottom;
-    const showAbove = spaceBelow < popoverHeight && rect.top > popoverHeight;
+  const fileTypeLabel = isFolder
+    ? 'Google Drive Folder'
+    : info.fileType === 'pdf'
+    ? 'PDF Document'
+    : info.fileType === 'sheet'
+    ? 'Google Spreadsheet'
+    : info.fileType === 'doc'
+    ? 'Google Document'
+    : info.fileType === 'slide'
+    ? 'Google Presentation'
+    : isGoogleDrive
+    ? 'Google Drive Document'
+    : 'Web Resource';
 
-    const top = showAbove ? rect.top - popoverHeight - 8 : rect.bottom + 8;
-    // Keep horizontally within window bounds
-    const left = Math.max(16, Math.min(window.innerWidth - popoverWidth - 16, rect.left - 10));
+  // Natural wrapping link styles so long codes/titles never overflow their parent card or table block
+  let linkStyle = `underline underline-offset-2 decoration-[#1E4D2B]/40 hover:decoration-[#1E4D2B] font-medium text-[#1E4D2B] hover:text-[#0E3322] transition-colors inline break-words [overflow-wrap:anywhere] whitespace-normal cursor-pointer ${className}`;
+  let iconStyle = `w-3 h-3 text-[#1E4D2B]/70 shrink-0 inline-block align-baseline ml-1 ${iconClassName}`;
 
-    setCoords({ top, left, showAbove });
-  };
+  if (variant === 'dark') {
+    linkStyle = `underline underline-offset-2 decoration-white/60 hover:decoration-white font-semibold text-white hover:text-white/85 transition-colors inline break-words [overflow-wrap:anywhere] whitespace-normal cursor-pointer ${className}`;
+    iconStyle = `w-3 h-3 text-white shrink-0 inline-block align-baseline ml-1 ${iconClassName}`;
+  } else if (variant === 'badge') {
+    linkStyle = `inline-flex flex-wrap items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-[#E3EFE8] text-[#1E4D2B] hover:bg-[#d0e5d8] border border-[#1E4D2B]/20 transition-all max-w-full break-words [overflow-wrap:anywhere] whitespace-normal text-left ${className}`;
+    iconStyle = `w-3 h-3 text-[#1E4D2B] shrink-0 inline-block ${iconClassName}`;
+  }
 
-  const handleMouseEnter = () => {
-    if (closeTimerRef.current) {
-      clearTimeout(closeTimerRef.current);
-      closeTimerRef.current = null;
-    }
-    // 0ms delay: Instantaneous opening as soon as cursor moves into the link
-    updateCoordinates();
-    setIsOpen(true);
-  };
-
-  const handleMouseLeave = () => {
-    closeTimerRef.current = setTimeout(() => {
-      setIsOpen(false);
-    }, 200);
-  };
-
-  const handlePopoverMouseEnter = () => {
-    if (closeTimerRef.current) {
-      clearTimeout(closeTimerRef.current);
-      closeTimerRef.current = null;
-    }
-  };
-
-  const handlePopoverMouseLeave = () => {
-    closeTimerRef.current = setTimeout(() => {
-      setIsOpen(false);
-    }, 200);
-  };
-
-  const handleCopyLink = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (info.url) {
-      navigator.clipboard.writeText(info.url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  };
-
-  // Google Drive Colored Icon
-  const renderFileIcon = () => {
-    if (info.fileType === 'pdf') {
-      return (
-        <div className="w-6 h-6 rounded bg-[#EA4335]/10 text-[#EA4335] flex items-center justify-center shrink-0">
-          <FileText className="w-3.5 h-3.5" />
-        </div>
-      );
-    }
-    if (info.fileType === 'sheet') {
-      return (
-        <div className="w-6 h-6 rounded bg-[#0F9D58]/10 text-[#0F9D58] flex items-center justify-center shrink-0">
-          <FileSpreadsheet className="w-3.5 h-3.5" />
-        </div>
-      );
-    }
-    if (info.fileType === 'doc') {
-      return (
-        <div className="w-6 h-6 rounded bg-[#4285F4]/10 text-[#4285F4] flex items-center justify-center shrink-0">
-          <FileText className="w-3.5 h-3.5" />
-        </div>
-      );
-    }
-    // Google Drive 3-color icon
-    return (
-      <svg className="w-6 h-6 shrink-0" viewBox="0 0 87.3 78" xmlns="http://www.w3.org/2000/svg">
-        <path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/>
-        <path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44c-.8 1.4-1.2 2.95-1.2 4.5h27.5z" fill="#00ac47"/>
-        <path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.502l5.852 11.5z" fill="#ea4335"/>
-        <path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/>
-        <path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/>
-        <path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/>
-      </svg>
-    );
-  };
-
-  const popoverContent = isOpen && (
-    <div
-      ref={popoverRef}
-      onMouseEnter={handlePopoverMouseEnter}
-      onMouseLeave={handlePopoverMouseLeave}
-      style={{
-        position: 'fixed',
-        top: `${coords.top}px`,
-        left: `${coords.left}px`,
-        zIndex: 99999
-      }}
-      className="w-[310px] bg-white rounded-[14px] border border-[#D1D5DB] shadow-[0_8px_30px_rgba(0,0,0,0.18)] overflow-hidden font-sans transition-all duration-200 animate-in fade-in zoom-in-95 pointer-events-auto"
-    >
-      {/* Popover Header — Google Sheets style */}
-      <div className="p-3 bg-white border-b border-[#F1F5F9] flex items-center justify-between gap-2.5">
-        <div className="flex items-center gap-2.5 min-w-0">
-          {renderFileIcon()}
-          <div className="min-w-0">
-            <h4 className="text-xs font-semibold text-[#1F2937] truncate leading-tight" title={info.fileTitle || info.label}>
-              {info.fileTitle || info.label}
-            </h4>
-            <div className="flex items-center gap-1.5 mt-0.5">
-              <span className="text-[10px] text-[#6B7280]">Google Drive</span>
-              <span className="text-[10px] text-[#9CA3AF]">•</span>
-              <span className="text-[10px] font-medium text-[#4B5563] uppercase tracking-wider">
-                {info.fileType.toUpperCase()}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <a
-          href={info.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="p-1.5 text-[#6B7280] hover:text-[#1155cc] hover:bg-[#F3F4F6] rounded-md transition-colors shrink-0 cursor-pointer"
-          title="Open in Google Drive"
-        >
-          <ExternalLink className="w-3.5 h-3.5" />
-        </a>
-      </div>
-
-      {/* Popover Preview Frame — Instant Direct Display */}
-      <div className="relative w-full h-[160px] bg-[#0F172A] border-b border-[#F1F5F9] overflow-hidden group select-none">
-        {/* Instant Document Canvas with official header, title, and seal */}
-        <div className="absolute inset-0 p-3.5 bg-gradient-to-b from-[#FAFBF8] to-[#EEF2EA] flex flex-col justify-between">
-          <div className="flex items-center justify-between border-b border-dashed border-[#CBD5E1] pb-1.5">
-            <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-[#1E4D2B]" />
-              <span className="text-[10px] font-bold text-[#1E4D2B] tracking-wider uppercase">JHCSC & CHED Record</span>
-            </div>
-            <span className="text-[9px] font-mono font-semibold text-[#1E4D2B] bg-[#E3EFE8] px-2 py-0.5 rounded-full uppercase">
-              {info.fileType.toUpperCase()} FILE
-            </span>
-          </div>
-
-          <div className="py-1">
-            <div className="text-xs font-extrabold text-[#0E3322] leading-snug line-clamp-2" title={info.fileTitle || info.label}>
-              {info.fileTitle || info.label}
-            </div>
-            <div className="text-[10px] text-[#475569] mt-0.5 line-clamp-1">
-              Republic of the Philippines • J.H. Cerilles State College
-            </div>
-            <div className="text-[9px] text-[#64748B] mt-0.5">
-              Official Evaluated Compliance & Academic Document
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between pt-1.5 border-t border-[#CBD5E1] text-[10px]">
-            <span className="text-[#1E4D2B] font-bold flex items-center gap-1">
-              ✓ Verified Document
-            </span>
-            <span className="text-[#1155cc] font-semibold flex items-center gap-1">
-              <Eye className="w-3 h-3" /> Ready to View
-            </span>
-          </div>
-        </div>
-
-        {/* Instant Thumbnail overlay if available from Google Drive CDN */}
-        {info.thumbnailUrl && !imgError && (
-          <img
-            src={info.thumbnailUrl}
-            alt={info.fileTitle || info.label}
-            loading="eager"
-            className="absolute inset-0 w-full h-full object-cover object-top opacity-95 transition-opacity duration-200"
-            onError={() => setImgError(true)}
-          />
-        )}
-
-        {/* Hover overlay button to open */}
-        <a
-          href={info.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="absolute inset-0 bg-[#0E3322]/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5 text-white text-xs font-bold cursor-pointer backdrop-blur-[1px]"
-        >
-          <ExternalLink className="w-3.5 h-3.5" />
-          <span>Click to open in Google Drive</span>
-        </a>
-      </div>
-
-      {/* Popover Footer Action Bar */}
-      <div className="p-2.5 bg-[#FAFBF8] flex items-center justify-between gap-2">
-        <button
-          type="button"
-          onClick={handleCopyLink}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium text-[#475569] hover:text-[#0F172A] hover:bg-[#EEF1EB] rounded-md transition-colors cursor-pointer"
-        >
-          {copied ? (
-            <>
-              <Check className="w-3.5 h-3.5 text-[#1E4D2B]" />
-              <span className="text-[#1E4D2B] font-semibold">Copied!</span>
-            </>
-          ) : (
-            <>
-              <Copy className="w-3.5 h-3.5 text-[#64748B]" />
-              <span>Copy link</span>
-            </>
-          )}
-        </button>
-
-        <a
-          href={info.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 px-3 py-1 bg-[#1a73e8] hover:bg-[#1557b0] text-white text-[11px] font-semibold rounded-md shadow-2xs transition-colors cursor-pointer"
-        >
-          <span>Open file</span>
-          <ExternalLink className="w-3 h-3 ml-0.5" />
-        </a>
-      </div>
-    </div>
-  );
+  const activePreviewUrl = info.previewUrl || info.url;
+  const shouldMountPortal = (isHovered || isPrewarmed) && Boolean(info.url);
 
   return (
     <>
@@ -279,12 +230,136 @@ export const GoogleDrivePreviewCell: React.FC<GoogleDrivePreviewCellProps> = ({
         ref={triggerRef}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
-        className={`inline-block text-[#1155cc] hover:text-[#1a73e8] hover:underline cursor-pointer transition-colors ${className}`}
+        className="relative inline max-w-full align-baseline group cursor-pointer break-words [overflow-wrap:anywhere] whitespace-normal"
       >
-        {info.label}
+        <a
+          href={info.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={linkStyle}
+        >
+          <span className="break-words [overflow-wrap:anywhere] whitespace-normal">{info.label}</span>
+          <ExternalLink className={iconStyle} />
+        </a>
       </span>
 
-      {typeof document !== 'undefined' && createPortal(popoverContent, document.body)}
+      {/* Uniform Directly-Interactive Popover Preview Card (Pre-warmed & Keep-Alive) */}
+      {shouldMountPortal &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            style={
+              isHovered
+                ? {
+                    position: 'fixed',
+                    top: `${coords.top}px`,
+                    left: `${coords.left}px`,
+                    width: `${Math.min(360, window.innerWidth - 24)}px`,
+                    zIndex: 99999
+                  }
+                : {
+                    position: 'fixed',
+                    top: '-9999px',
+                    left: '-9999px',
+                    width: '360px',
+                    zIndex: -1,
+                    opacity: 0,
+                    pointerEvents: 'none',
+                    visibility: 'hidden'
+                  }
+            }
+            className="bg-white rounded-xl shadow-[0_16px_40px_rgba(0,0,0,0.25)] border border-slate-200 p-3.5 flex flex-col gap-2.5 font-sans text-left text-slate-800 transition-opacity duration-100 pointer-events-auto"
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-100">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-6 h-6 rounded-md bg-[#E3EFE8] flex items-center justify-center shrink-0 text-[#1E4D2B]">
+                  {isGoogleDrive ? <FileText className="w-3.5 h-3.5" /> : <Globe className="w-3.5 h-3.5" />}
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xs font-bold text-slate-900 truncate" title={info.fileTitle || info.label}>
+                    {info.fileTitle || info.label}
+                  </div>
+                  <div className="text-[10px] text-[#64748B] font-medium flex items-center gap-1">
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#1E4D2B]" />
+                    <span>{fileTypeLabel}</span>
+                  </div>
+                </div>
+              </div>
+              <a
+                href={info.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[#64748B] hover:text-[#1E4D2B] p-1 rounded hover:bg-slate-100 transition-colors shrink-0"
+                title="Open link in new tab"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            </div>
+
+            {/* Body Preview Frame — Instant Page Thumbnail + Directly Interactive Iframe */}
+            <div className="relative w-full h-[210px] bg-slate-100 rounded-lg border border-slate-200 overflow-hidden flex items-center justify-center shadow-inner">
+              {!iframeLoaded && info.thumbnailUrl && !thumbError && (
+                <img
+                  src={info.thumbnailUrl}
+                  alt={info.fileTitle || info.label}
+                  className="absolute inset-0 w-full h-full object-contain object-top bg-white z-10 pointer-events-none"
+                  onError={() => setThumbError(true)}
+                />
+              )}
+
+              {!iframeLoaded && (
+                <div
+                  className={
+                    info.thumbnailUrl && !thumbError
+                      ? 'absolute bottom-2 right-2 flex items-center gap-1.5 bg-[#0E3322]/90 text-white px-2.5 py-1 rounded-full shadow-sm z-20 pointer-events-none'
+                      : 'absolute inset-0 flex flex-col items-center justify-center bg-slate-50/90 text-slate-500 gap-1.5 z-10 pointer-events-none'
+                  }
+                >
+                  <Loader2
+                    className={`w-3.5 h-3.5 animate-spin ${
+                      info.thumbnailUrl && !thumbError ? 'text-[#E8AE1F]' : 'text-[#1E4D2B]'
+                    }`}
+                  />
+                  <span className="text-[10px] font-medium">
+                    {info.thumbnailUrl && !thumbError ? 'Syncing live scroll...' : 'Loading interactive preview...'}
+                  </span>
+                </div>
+              )}
+
+              <iframe
+                src={activePreviewUrl}
+                title={`Preview ${info.fileTitle || info.label}`}
+                className={`w-full h-full rounded border-0 relative z-10 pointer-events-auto transition-opacity duration-150 ${
+                  iframeLoaded ? 'opacity-100' : 'opacity-0'
+                }`}
+                onLoad={() => setIframeLoaded(true)}
+                loading="eager"
+              />
+            </div>
+
+            {/* Footer Action */}
+            <div className="pt-0.5 flex items-center justify-between text-[11px] text-slate-500">
+              <span className="text-[10.5px] text-[#64748B] truncate max-w-[175px]" title={info.url}>
+                {isGoogleDrive ? 'Interactive Google Drive Preview' : 'Interactive Web Preview'}
+              </span>
+
+              <a
+                href={info.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-bold text-xs text-[#0E3322] bg-[#E3EFE8] hover:bg-[#d0e5d8] px-2.5 py-1 rounded-md transition-colors inline-flex items-center gap-1"
+              >
+                <span>Open Document</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            </div>
+          </div>,
+          document.body
+        )}
     </>
   );
 };

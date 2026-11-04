@@ -1,21 +1,50 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Support both Vite standard (VITE_) and Next.js style (NEXT_PUBLIC_) environment variables
-const supabaseUrl =
+function normalizeUrl(url: string): string {
+  if (!url) return 'https://wvonwulrshllpcngveaw.supabase.co';
+  let cleaned = url.trim().replace(/\/rest\/v1\/?$/, '').replace(/\/+$/, '');
+  if (cleaned.includes('cpiazhhkkzwbcjsuhapr') || !cleaned.includes('wvonwulrshllpcngveaw')) {
+    cleaned = 'https://wvonwulrshllpcngveaw.supabase.co';
+  }
+  return cleaned;
+}
+
+const rawUrl =
   (import.meta as any).env?.VITE_SUPABASE_URL ||
-  (import.meta as any).env?.NEXT_PUBLIC_SUPABASE_URL ||
-  (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_SUPABASE_URL) ||
-  '';
+  (typeof window !== 'undefined' ? localStorage.getItem('VITE_SUPABASE_URL') : null) ||
+  'https://wvonwulrshllpcngveaw.supabase.co';
 
-const supabaseAnonKey =
+const rawAnonKey =
   (import.meta as any).env?.VITE_SUPABASE_ANON_KEY ||
-  (import.meta as any).env?.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-  (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_SUPABASE_ANON_KEY) ||
-  '';
+  (typeof window !== 'undefined' ? localStorage.getItem('VITE_SUPABASE_ANON_KEY') : null) ||
+  'sb_publishable_Gi8d1TN9ECPI84apyy6U6w_m8lDBP9B';
 
-export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
+// Clear old cpiazhhkkzwbcjsuhapr from localStorage if present
+if (typeof window !== 'undefined') {
+  const stored = localStorage.getItem('VITE_SUPABASE_URL');
+  if (stored && (stored.includes('cpiazhhkkzwbcjsuhapr') || !stored.includes('wvonwulrshllpcngveaw'))) {
+    localStorage.removeItem('VITE_SUPABASE_URL');
+    localStorage.removeItem('VITE_SUPABASE_ANON_KEY');
+  }
+}
+
+const cleanUrl = normalizeUrl(rawUrl);
+
+const NEW_URL = 'https://wvonwulrshllpcngveaw.supabase.co';
+const NEW_KEY = 'sb_publishable_Gi8d1TN9ECPI84apyy6U6w_m8lDBP9B';
+
+export const isSupabaseConfigured = true;
 
 export const supabase = createClient(
-  supabaseUrl || 'https://cpiazhhkkzwbcjsuhapr.supabase.co',
-  supabaseAnonKey || 'sb_publishable_9kz5P-L4PhYlc7-il39bug_JaEWl74-'
+  NEW_URL,
+  NEW_KEY,
+  {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: {
+      headers: {
+        'apikey': NEW_KEY,
+        'Accept': 'application/json'
+      }
+    }
+  }
 );

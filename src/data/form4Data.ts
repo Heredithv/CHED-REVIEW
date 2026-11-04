@@ -16,7 +16,7 @@ export const form4PageData = {
   breadcrumbHome: "Home",
   breadcrumbCurrent: "Form 4",
   title: "Form 4: Research spending",
-  subtitle: "Actual research spending was 2.2 to 3.8 times the expected amount in every school year from 2021 to 2025.",
+  subtitle: "Annual research expenditures and faculty involvement for SY 2021–2025, funded through GAA and STF.",
   subtitleHighlight: "2.2 to 3.8 times",
 
   chartCard: {

@@ -3,7 +3,6 @@ import { siteContent } from '../data/siteContent';
 import { requirementsPageData } from '../data/requirementsData';
 import { form3PageData } from '../data/form3Data';
 import { form4PageData } from '../data/form4Data';
-import { programsPageData, ProgramItem } from '../data/programsData';
 
 export function exportSingleTable(data: any[], fileName: string, sheetName: string) {
   const ws = XLSX.utils.json_to_sheet(data);
@@ -12,7 +11,36 @@ export function exportSingleTable(data: any[], fileName: string, sheetName: stri
   XLSX.writeFile(wb, fileName);
 }
 
-export function exportForm3ToExcel() {
+export function exportForm3ToExcel(facultyList?: any[], summaryList?: any[]) {
+  if (facultyList && facultyList.length > 0) {
+    const rows = facultyList.map((f, idx) => {
+      const ongoingTitles = (f.ongoingResearch || []).map((r: any) => r.research_title).filter(Boolean).join('; ');
+      const ongoingYears = (f.ongoingResearch || []).map((r: any) => r.year_started ? `SY ${r.year_started}` : '').filter(Boolean).join('; ');
+      const completedTitles = (f.completedResearch || []).map((r: any) => r.research_title).filter(Boolean).join('; ');
+      const completedYears = (f.completedResearch || []).map((r: any) => r.year_completed || r.year_completed_raw || '').filter(Boolean).join('; ');
+      const outputCitations = (f.completedResearch || []).flatMap((r: any) => (r.outputs || []).map((o: any) => o.output_title_or_citation || o.output_type)).filter(Boolean).join('; ');
+
+      return {
+        '#': idx + 1,
+        'Campus': f.campus || '',
+        'Department / School': f.department || '',
+        'Faculty Name': f.name || '',
+        'Academic Rank': f.academicRank || '',
+        'Permanent': f.fullTimePermanent ? 'TRUE' : 'FALSE',
+        'Contractual': f.fullTimeContractual ? 'TRUE' : 'FALSE',
+        'Ongoing Research Title': ongoingTitles || '—',
+        'Ongoing SY / Year Started': ongoingYears || '—',
+        'Completed Research Title': completedTitles || '—',
+        'Year Completed': completedYears || '—',
+        'Outputs & Citations (Journal/Patent/Book)': outputCitations || '—',
+        'Google Drive Evidence Folder': f.driveFolderUrl || ''
+      };
+    });
+
+    exportSingleTable(rows, 'Form-3-Faculty-Research-Directory-JHCSC.xlsx', 'Form 3 Research');
+    return;
+  }
+
   const rows: any[] = [];
   form3PageData.campuses.forEach(group => {
     group.schools.forEach(school => {
@@ -135,57 +163,50 @@ export function exportForm2ToExcel(facultyList: any[] = []) {
   exportSingleTable(rows, 'Form-2-Faculty-Profiles-JHCSC.xlsx', 'Form 2 Faculty');
 }
 
-export function exportForm5ToExcel(campus: string) {
+export function exportForm5ToExcel(campusOrRows: any, campusName = 'Main Campus') {
+  if (Array.isArray(campusOrRows) && campusOrRows.length > 0) {
+    const cleanCampus = campusName.replace(/[^a-zA-Z0-9]/g, '-');
+    exportSingleTable(campusOrRows, `Form-5-Learning-Resources-${cleanCampus}.xlsx`, 'Form 5 Resources');
+    return;
+  }
+  const campus = typeof campusOrRows === 'string' ? campusOrRows : campusName;
   const rows = [
-    { 'Requirement': 'Library — Vision, Mission, Goals', 'Evidence': 'view_link_to_evidence.pdf', 'Status': 'With evidence', 'Campus': campus },
-    { 'Requirement': 'Library — Administration', 'Evidence': 'insert narrative description', 'Status': 'Pending', 'Campus': campus },
-    { 'Requirement': 'Library — Collection Development', 'Evidence': 'collection-policy.pdf', 'Status': 'With evidence', 'Campus': campus },
-    { 'Requirement': 'Online Academic Databases', 'Evidence': 'insert narrative description', 'Status': 'Pending', 'Campus': campus },
-    { 'Requirement': 'Laboratories and Facilities', 'Evidence': 'lab-inventory-2026.pdf', 'Status': 'With evidence', 'Campus': campus }
+    { 'Requirement': 'Section 1 — Vision, Mission, Goals', 'Description': 'The JHCSC VMGO is visibly posted on premises.', 'Evidence': 'With evidence', 'Campus': campus },
+    { 'Requirement': 'Section 2-A — Supervision', 'Description': 'Supervision of library is clearly defined in organizational chart.', 'Evidence': 'JHCSC System Org Chart', 'Campus': campus },
+    { 'Requirement': 'Section 2-B — Licensed Librarian', 'Description': 'College librarian heads library with full credentials.', 'Evidence': 'PRC I.D., Appointment paper', 'Campus': campus }
   ];
   exportSingleTable(rows, `Form-5-Learning-Resources-${campus.replace(/\s+/g, '-')}.xlsx`, 'Form 5 Resources');
 }
 
-export function exportForm6ToExcel(campus: string) {
-  const rows = [
-    { 'Support Structure': '1. Counseling and Guidance Services', 'Description / Evidence': 'guidance-manual-2025.pdf', 'Status': 'With evidence', 'Campus': campus },
-    { 'Support Structure': '2. Wellness and Recreation Facilities', 'Description / Evidence': 'facilities-inventory.pdf', 'Status': 'With evidence', 'Campus': campus },
-    { 'Support Structure': '3. Student Information and Communication', 'Description / Evidence': 'insert narrative description', 'Status': 'Pending', 'Campus': campus },
-    { 'Support Structure': '4. Student Organization and Activities', 'Description / Evidence': 'org-accreditation-list.pdf', 'Status': 'With evidence', 'Campus': campus },
-    { 'Support Structure': 'Office of Student Affairs', 'Description / Evidence': 'osa-annual-report.pdf', 'Status': 'With evidence', 'Campus': campus },
-    { 'Support Structure': 'Scholarship and Financial Assistance', 'Description / Evidence': 'insert narrative description', 'Status': 'Pending', 'Campus': campus }
-  ];
-  exportSingleTable(rows, `Form-6-Student-Support-${campus.replace(/\s+/g, '-')}.xlsx`, 'Form 6 Support');
+export function exportForm6ToExcel(rows: any[], campusName = 'Main Campus') {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return;
+  }
+  const cleanCampus = campusName.replace(/[^a-zA-Z0-9]/g, '-');
+  exportSingleTable(rows, `Form-6-Student-Support-${cleanCampus}.xlsx`, 'Form 6 Support');
 }
 
-export function exportForm7ToExcel() {
-  const rows = [
-    { 'Category': 'Research & Development', 'Partner Institution': 'Department of Agriculture — Bureau of Agricultural Research', 'Description': 'Crop-Land Suitability Assessment research partnership.', 'Duration': 'Nov 2021 – Jun 2023 · BS Agriculture' },
-    { 'Category': 'Technology Transfer', 'Partner Institution': 'Jose Rizal Memorial State University (Siocon)', 'Description': 'Technology transfer, technology incubation.', 'Duration': 'Aug 2025 – Aug 2030' },
-    { 'Category': 'Research, Development & Extension', 'Partner Institution': 'Jose Rizal Memorial State University', 'Description': 'Collaborative research, development and extension activities.', 'Duration': 'Aug 2025 – Aug 2030' },
-    { 'Category': 'Research & Development', 'Partner Institution': 'Philippine Coconut Authority', 'Description': 'Seed Farm Development Project.', 'Duration': 'Oct 2024 – Oct 2059' }
-  ];
+export function exportForm7ToExcel(rows: any[] = []) {
+  if (!Array.isArray(rows) || rows.length === 0) return;
   exportSingleTable(rows, 'Form-7-Research-Linkages.xlsx', 'Form 7 Linkages');
 }
 
-export function exportForm8ToExcel() {
-  const rows = [
-    { 'Program Title': 'Climate-Resilient Zampen Native Chicken Production', 'Description': 'Baseline vulnerability assessment and climate-resilient poultry production methods for farmers.', 'MOA / Partner': 'MOA: Katipunan, Mahayag, Mati', 'Target Community': 'Target: Poultry farmers and raisers', 'Expected Outcomes': 'Farmers aware of risks; improved climate-resilient production practices.' },
-    { 'Program Title': 'E-PHARIAN Program', 'Description': 'Digital extension program supporting rural communities.', 'MOA / Partner': 'MOPA: Dumalinao', 'Target Community': 'Rural community participants', 'Expected Outcomes': 'Improved digital access and community services.' },
-    { 'Program Title': 'AR & Attendance Project LAMDAG', 'Description': 'Augmented reality and smart attendance tracking system for schools.', 'MOA / Partner': 'N/A', 'Target Community': 'School communities', 'Expected Outcomes': 'Modernized attendance systems; improved school administration.' }
-  ];
-  exportSingleTable(rows, 'Form-8-Outreach-Programs.xlsx', 'Form 8 Outreach');
+export function exportForm8ToExcel(customRows?: any[]) {
+  if (!customRows || customRows.length === 0) {
+    return;
+  }
+  exportSingleTable(customRows, 'CHED-Form-U8-Outreach-Programs-JHCSC.xlsx', 'Form U8 Outreach');
 }
 
-export function exportFilteredProgramsToExcel(programs: ProgramItem[], campusLabel: string) {
+export function exportFilteredProgramsToExcel(programs: any[], campusLabel: string) {
   const rows = programs.map(p => ({
     'Campus': p.campus,
     'Program Code': p.code,
-    'Program Name': p.name,
+    'Program Name': p.programName || p.name,
     'Academic Level': p.level,
-    'Complied Checks': p.status === 'Statement pending' ? 'Statement pending' : p.compliedChecks,
-    'Total Checks': p.status === 'Statement pending' ? 'N/A' : p.totalChecks,
-    'Compliance Rate': p.status === 'Statement pending' ? 'Pending' : `${Math.round((p.compliedChecks / p.totalChecks) * 100)}%`
+    'Complied Checks': p.compliedCount ?? p.compliedChecks ?? 0,
+    'Total Checks': p.totalCount ?? p.totalChecks ?? 0,
+    'Compliance Rate': `${p.compliancePercent ?? 0}%`
   }));
 
   const cleanLabel = campusLabel.replace(/[^a-zA-Z0-9]/g, '-');
@@ -250,19 +271,6 @@ export function downloadAllSiteData() {
   }));
   const wsForm4 = XLSX.utils.json_to_sheet(form4Rows);
   XLSX.utils.book_append_sheet(wb, wsForm4, 'Form 4 Spending');
-
-  // 5. Programs
-  const progRows = programsPageData.programs.map(p => ({
-    'Campus': p.campus,
-    'Code': p.code,
-    'Program Name': p.name,
-    'Level': p.level,
-    'Complied Checks': p.status === 'Statement pending' ? 'Statement pending' : p.compliedChecks,
-    'Total Checks': p.status === 'Statement pending' ? 'N/A' : p.totalChecks,
-    'Compliance %': p.status === 'Statement pending' ? 'Pending' : `${Math.round((p.compliedChecks / p.totalChecks) * 100)}%`
-  }));
-  const wsProg = XLSX.utils.json_to_sheet(progRows);
-  XLSX.utils.book_append_sheet(wb, wsProg, 'Programs Compliance');
 
   XLSX.writeFile(wb, 'JHCSC-Road-To-University-Status-Complete-Data.xlsx');
 }

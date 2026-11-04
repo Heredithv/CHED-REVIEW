@@ -157,7 +157,7 @@ export const INSTITUTIONAL_SUMMARY = {
   target_university_name: 'Zamboanga del Sur State University',
   legal_basis: 'Republic Act No. 12295',
   evaluation_standard: 'CHED Memorandum Order No. 46, Series of 2012',
-  data_as_of: 'March 24, 2026',
+  data_as_of: 'Nov 4, 2026',
   total_enrollment: 14820,
   undergraduate_enrollment: 13950,
   graduate_enrollment: 870,

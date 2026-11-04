@@ -1,5 +1,4 @@
 import React from 'react';
-import { TopographicContours } from './TopographicContours';
 
 interface InnerHeroBandProps {
   breadcrumb: string;
@@ -32,11 +31,6 @@ export const InnerHeroBand: React.FC<InnerHeroBandProps> = ({
 
   return (
     <section className="relative bg-[#0E3322] text-[#F5F2E6] pt-10 pb-28 overflow-hidden">
-      {/* Faint contour lines background */}
-      <div className="absolute right-0 top-0 bottom-0 w-full sm:w-2/3 pointer-events-none overflow-hidden flex justify-end">
-        <TopographicContours className="w-full h-full max-w-xl object-contain translate-x-12 -translate-y-6" opacity={0.06} />
-      </div>
-
       <div className="relative max-w-[1360px] mx-auto px-4 sm:px-6 z-10">
         {/* Breadcrumb */}
         <nav className="text-xs sm:text-sm text-[#F5F2E6]/80 mb-4" aria-label="Breadcrumb">
