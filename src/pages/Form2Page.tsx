@@ -1484,8 +1484,8 @@ export const Form2Page: React.FC = () => {
                                         <span className="text-[9.5px] font-bold uppercase tracking-wider text-[#64748B] block">
                                           SPECIALIZATION
                                         </span>
-                                        <p className="text-[11.5px] font-bold text-[#15221A] mt-0.5 break-words">
-                                          {f.academicSpecialization || 'General Education'}
+                                        <p className="text-[11.5px] font-bold text-[#15221A] mt-0.5 break-words min-h-[16px]">
+                                          {f.academicSpecialization || ''}
                                         </p>
                                       </div>
 
@@ -2017,7 +2017,7 @@ export const Form2Page: React.FC = () => {
 
                                 {/* Academic Specialization */}
                                 <td className="py-2.5 px-3 align-top text-[#334155] text-[11px] leading-snug break-words">
-                                  {f.academicSpecialization || '—'}
+                                  {f.academicSpecialization || ''}
                                 </td>
 
                                 {/* Licensed */}
