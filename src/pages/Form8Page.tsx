@@ -76,13 +76,11 @@ function normalizeCampus(raw?: string | null): 'Main' | 'Pagadian' | 'Dumingag' 
   const lower = raw.toLowerCase();
   if (lower.includes('dumingag')) return 'Dumingag';
   if (lower.includes('pagadian')) return 'Pagadian';
-  if (lower.includes('cmse') || lower.includes('canuto')) return 'CMSE';
+  if (lower.includes('cmse') || lower.includes('canuto') || lower.includes('lakewood')) return 'CMSE';
   return 'Main';
 }
 
-
-
-const FORM8_CACHE_KEY = 'jhcsc_form8_supabase_v1';
+const FORM8_CACHE_KEY = 'jhcsc_form8_supabase_v2';
 let cachedForm8Programs: Form8OutreachProgram[] | null = null;
 let prefetchForm8Promise: Promise<Form8OutreachProgram[] | null> | null = null;
 
@@ -426,11 +424,12 @@ export const Form8Page: React.FC = () => {
 
   // Grouped by Campus & Category
   const groupedHierarchy = useMemo(() => {
-    const campusOrder = ['Main', 'Dumingag', 'Pagadian', 'CMSE'];
+    const campusOrder = ['Main', 'Dumingag', 'Pagadian', 'Lakewood'];
     const map: Record<string, Record<string, Form8OutreachProgram[]>> = {};
 
     filteredPrograms.forEach((p) => {
-      const camp = `${p.campus} Campus`;
+      const campusDisplay = p.campus === 'CMSE' ? 'Lakewood' : p.campus;
+      const camp = `${campusDisplay} Campus`;
       const cat = p.category || 'Based on Faculty Research';
       if (!map[camp]) map[camp] = {};
       if (!map[camp][cat]) map[camp][cat] = [];
@@ -455,7 +454,7 @@ export const Form8Page: React.FC = () => {
   const handleExportExcel = () => {
     const rows = filteredPrograms.map((p) => ({
       'No.': p.no,
-      'Campus': `${p.campus} Campus`,
+      'Campus': `${p.campus === 'CMSE' ? 'Lakewood' : p.campus} Campus`,
       'School Year': `SY ${p.schoolYear}`,
       'Title of Outreach Programs or Activities': p.title,
       'Document Name (Evidence)': p.documentName || '',
@@ -582,7 +581,7 @@ export const Form8Page: React.FC = () => {
                   { id: 'Main', label: 'Main' },
                   { id: 'Dumingag', label: 'Dumingag' },
                   { id: 'Pagadian', label: 'Pagadian' },
-                  { id: 'CMSE', label: 'CMSE' }
+                  { id: 'CMSE', label: 'Lakewood' }
                 ].map((c) => (
                   <button
                     key={c.id}
@@ -773,7 +772,7 @@ export const Form8Page: React.FC = () => {
                               <div className="min-w-0 flex-1">
                                 <div className="flex flex-wrap items-center gap-2 mb-1.5">
                                   <span className="text-xs text-[#CBD5E1] font-medium">
-                                    {prog.campus} Campus · SY {prog.schoolYear}
+                                    {prog.campus === 'CMSE' ? 'Lakewood' : prog.campus} Campus · SY {prog.schoolYear}
                                   </span>
                                 </div>
                                 <h4 className="font-bold text-white text-base sm:text-lg leading-snug tracking-tight">
@@ -1096,7 +1095,7 @@ export const Form8Page: React.FC = () => {
                   {filteredPrograms.map((prog) => (
                     <tr key={prog.id} className="hover:bg-[#F9FAF8] transition-colors divide-x divide-[#E2E8F0] align-top">
                       <td className="py-3 px-3 font-semibold text-[#0E3322] whitespace-nowrap">
-                        {prog.campus}
+                        {prog.campus === 'CMSE' ? 'Lakewood' : prog.campus}
                         <div className="text-[10px] text-[#64748B] font-normal">SY {prog.schoolYear}</div>
                       </td>
                       <td className="py-3 px-3.5">

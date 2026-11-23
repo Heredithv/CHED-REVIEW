@@ -11,6 +11,12 @@ export interface Form1EnrollmentSY {
   count: number;
 }
 
+export interface Form1BoardResolution {
+  text: string;
+  link?: string;
+  fileId?: string;
+}
+
 export interface Form1ProgramItem {
   id: string;
   offeringId?: string;
@@ -21,15 +27,18 @@ export interface Form1ProgramItem {
   authority: string;
   authorityLink?: string;
   authorityFileId?: string;
+  boardResolutions: Form1BoardResolution[];
   copcStatus: string;
   copcRaw?: string;
   copcLink?: string;
   copcFileId?: string;
   syStarted: string;
   researchCourse: string;
+  researchCourseLink?: string;
   researchUnits: string | number;
   researchReqElec: 'Required' | 'Elective' | string;
   thesisDissertation: string;
+  thesisDissertationLink?: string;
   thesisUnits: string | number;
   prereqToGrad: 'Yes' | 'No' | string;
   averageEnrollment: number;
@@ -40,12 +49,16 @@ export interface Form1ProgramItem {
 }
 
 // Global in-memory and persistent cache for instant, zero-delay rendering on page switches
-const FORM1_STORAGE_KEY = 'jhcsc_form1_new_supabase_v4';
-const FORM1_SYNCED_KEY = 'jhcsc_form1_last_synced_v4';
+const FORM1_STORAGE_KEY = 'jhcsc_form1_new_supabase_v7';
+const FORM1_SYNCED_KEY = 'jhcsc_form1_last_synced_v7';
 
 // Explicitly wipe any stale caches from the previous database
 if (typeof window !== 'undefined') {
   try {
+    localStorage.removeItem('jhcsc_form1_new_supabase_v6');
+    localStorage.removeItem('jhcsc_form1_last_synced_v6');
+    localStorage.removeItem('jhcsc_form1_new_supabase_v5');
+    localStorage.removeItem('jhcsc_form1_last_synced_v5');
     localStorage.removeItem('jhcsc_form1_persistent_cache_v2');
     localStorage.removeItem('jhcsc_form1_persistent_cache');
     localStorage.removeItem('jhcsc_form1_cache');
@@ -365,19 +378,192 @@ function parseFlatForm1Rows(rows: any[]): Form1ProgramItem[] {
   const cleanText = (val: any) => {
     if (!val) return '';
     const s = String(val).trim();
-    if (s.toUpperCase() === 'NULL' || s === 'None' || s === '--') return '';
+    if (s.toUpperCase() === 'NULL' || s === 'None' || s === '--' || s === '0') return '';
     return s;
   };
 
-  return rows.map((r, index) => {
-    const rowId = r.row_id ?? index + 1;
-    const campusRaw = (r.campus_name || '').toLowerCase();
-    let campus: 'Main' | 'Pagadian' | 'Dumingag' | 'CMSE' = 'Main';
-    if (campusRaw.includes('pagadian')) campus = 'Pagadian';
-    else if (campusRaw.includes('dumingag')) campus = 'Dumingag';
-    else if (campusRaw.includes('cmse')) campus = 'CMSE';
+  const normBRKey = (s: string) =>
+    s
+      .toLowerCase()
+      .replace(/^\d+\.\s*/, '')
+      .replace(/\.pdf$/i, '')
+      .replace(/[^a-z0-9]/g, '');
 
+  const getCampusCode = (campusRaw: string): 'Main' | 'Pagadian' | 'Dumingag' | 'CMSE' => {
+    const c = (campusRaw || '').toLowerCase();
+    if (c.includes('pagadian')) return 'Pagadian';
+    if (c.includes('dumingag')) return 'Dumingag';
+    if (c.includes('cmse') || c.includes('lakewood') || c.includes('canuto') || c.includes('enerio')) return 'CMSE';
+    return 'Main';
+  };
+
+  // 1. Build a lookup directory of Board Resolution codes -> Google Drive URLs
+  // so multi-line cells or continuation rows automatically resolve their matching Drive link
+  const campusBrMap = new Map<string, string>();
+  const globalBrMap = new Map<string, string>();
+
+  for (const r of rows) {
+    const rawBr = cleanText(r.board_reso_no);
+    const rawLink = cleanLink(r.board_reso_link);
+    if (!rawBr || !rawLink) continue;
+
+    const lines = rawBr
+      .split(/\r?\n|\s*\|\s*/)
+      .map((x: string) => x.trim().replace(/\.pdf$/i, '').trim())
+      .filter(Boolean);
+    const links = rawLink
+      .split(/[\r\n|,;\s]+/)
+      .map((x: string) => x.trim())
+      .filter((x: string) => x.startsWith('http'));
+
+    if (lines.length === 1 && links.length === 1) {
+      const key = normBRKey(lines[0]);
+      const campus = getCampusCode(r.campus_name);
+      const cKey = `${campus}__${key}`;
+      if (!campusBrMap.has(cKey)) campusBrMap.set(cKey, links[0]);
+      if (!globalBrMap.has(key)) globalBrMap.set(key, links[0]);
+    }
+  }
+
+  const parseRowBRs = (rawBrVal: any, rawLinkVal: any, campus: string): Form1BoardResolution[] => {
+    const rawBr = cleanText(rawBrVal);
+    const rawLink = cleanLink(rawLinkVal);
+    if (!rawBr) return [];
+
+    const links = rawLink
+      ? rawLink
+          .split(/[\r\n|,;\s]+/)
+          .map((x: string) => x.trim())
+          .filter((x: string) => x.startsWith('http'))
+      : [];
+
+    // Split by newline, pipe, or multiple resolutions separated by '&' or numbered '1. ... 2. ...'
+    const lines = rawBr
+      .split(/\r?\n|\s*\|\s*|\s+&\s+(?=(?:BRN|BR\s*#|SN\s*#|\d+\.))|\s{2,}(?=\d+\.\s)/i)
+      .map((x: string) => x.trim().replace(/\.pdf$/i, '').trim())
+      .filter(Boolean);
+
+    return lines.map((line, idx) => {
+      const key = normBRKey(line);
+      const directLink = links[idx] || (links.length === 1 && idx === 0 ? links[0] : undefined);
+      const resolvedLink =
+        directLink || campusBrMap.get(`${campus}__${key}`) || globalBrMap.get(key) || links[0];
+      return {
+        text: line,
+        link: resolvedLink,
+      };
+    });
+  };
+
+  // 2. Merge spreadsheet continuation rows (rows added right underneath a program to hold extra Board Resolutions)
+  const mergedRows: any[] = [];
+  for (const r of rows) {
+    const campus = getCampusCode(r.campus_name);
     const progName = (r.program_offering || '').trim();
+    const majorClean = cleanText(r.major_specialization);
+    const rowBRs = parseRowBRs(r.board_reso_no, r.board_reso_link, campus);
+
+    const prev = mergedRows[mergedRows.length - 1];
+    const hasNoOwnData =
+      !cleanText(r.copc_no) &&
+      !cleanText(r.school_year_started) &&
+      !r.enrollees_sy21_22 &&
+      !r.enrollees_sy22_23 &&
+      !r.enrollees_sy23_24 &&
+      !r.enrollees_sy24_25 &&
+      !r.enrollees_sy25_26 &&
+      !r.enrollees_sy26_27;
+
+    const isContinuation =
+      prev &&
+      prev._campus === campus &&
+      prev._progName.toLowerCase() === progName.toLowerCase() &&
+      prev._majorClean.toLowerCase() === majorClean.toLowerCase() &&
+      hasNoOwnData;
+
+    if (isContinuation) {
+      for (const br of rowBRs) {
+        const existingIdx = prev._boardResolutions.findIndex(
+          (existing: Form1BoardResolution) => normBRKey(existing.text) === normBRKey(br.text)
+        );
+        if (existingIdx === -1) {
+          prev._boardResolutions.push(br);
+        } else if (!prev._boardResolutions[existingIdx].link && br.link) {
+          prev._boardResolutions[existingIdx].link = br.link;
+        }
+      }
+    } else {
+      mergedRows.push({
+        ...r,
+        _campus: campus,
+        _progName: progName,
+        _majorClean: majorClean,
+        _boardResolutions: rowBRs,
+      });
+    }
+  }
+
+  // 3. Deduplicate any stale leftover rows from shifted spreadsheet row indices
+  const dedupedRows: any[] = [];
+  const sigToIndex = new Map<string, number>();
+
+  for (const m of mergedRows) {
+    const sig = [
+      m._campus,
+      m._progName.toLowerCase(),
+      m._majorClean.toLowerCase(),
+      cleanText(m.copc_no).toLowerCase(),
+      cleanText(m.school_year_started).toLowerCase(),
+      String(m.enrollees_sy26_27 ?? ''),
+    ].join('|');
+
+    if (sigToIndex.has(sig)) {
+      const prevIdx = sigToIndex.get(sig)!;
+      const prevItem = dedupedRows[prevIdx];
+      for (const br of prevItem._boardResolutions) {
+        if (
+          !m._boardResolutions.some(
+            (existing: Form1BoardResolution) => normBRKey(existing.text) === normBRKey(br.text)
+          )
+        ) {
+          m._boardResolutions.push(br);
+        }
+      }
+      if (!cleanLink(m.research_course_titles_link) && cleanLink(prevItem.research_course_titles_link)) {
+        m.research_course_titles_link = prevItem.research_course_titles_link;
+      }
+      if (!cleanLink(m.thesis_course_title_link) && cleanLink(prevItem.thesis_course_title_link)) {
+        m.thesis_course_title_link = prevItem.thesis_course_title_link;
+      }
+      if (!cleanLink(m.major_specialization_link) && cleanLink(prevItem.major_specialization_link)) {
+        m.major_specialization_link = prevItem.major_specialization_link;
+      }
+      if (!cleanLink(m.copc_link) && cleanLink(prevItem.copc_link)) {
+        m.copc_link = prevItem.copc_link;
+      }
+      dedupedRows.splice(prevIdx, 1);
+      sigToIndex.clear();
+      dedupedRows.forEach((item, idx) => {
+        const itemSig = [
+          item._campus,
+          item._progName.toLowerCase(),
+          item._majorClean.toLowerCase(),
+          cleanText(item.copc_no).toLowerCase(),
+          cleanText(item.school_year_started).toLowerCase(),
+          String(item.enrollees_sy26_27 ?? ''),
+        ].join('|');
+        sigToIndex.set(itemSig, idx);
+      });
+    }
+
+    sigToIndex.set(sig, dedupedRows.length);
+    dedupedRows.push(m);
+  }
+
+  return dedupedRows.map((r, index) => {
+    const rowId = r.row_id ?? index + 1;
+    const campus: 'Main' | 'Pagadian' | 'Dumingag' | 'CMSE' = r._campus;
+    const progName = r._progName;
     const progLower = progName.toLowerCase();
     const levelRaw = (r.program_level || '').toLowerCase();
 
@@ -403,7 +589,8 @@ function parseFlatForm1Rows(rows: any[]): Form1ProgramItem[] {
       levelCategory = 'Undergraduate';
     }
 
-    const groupName = `${campus} Campus — ${levelCategory} Programs`;
+    const campusDisplay = campus === 'CMSE' ? 'Lakewood' : campus;
+    const groupName = `${campusDisplay} Campus — ${levelCategory} Programs`;
 
     const history: Form1EnrollmentSY[] = [
       { schoolYear: '2021-2022', schoolYearShort: 'SY 21–22', count: parseCount(r.enrollees_sy21_22) },
@@ -414,9 +601,10 @@ function parseFlatForm1Rows(rows: any[]): Form1ProgramItem[] {
       { schoolYear: '2026-2027', schoolYearShort: 'SY 26–27', count: parseCount(r.enrollees_sy26_27) },
     ];
 
-    let avgVal = r.average_enrollees !== null && r.average_enrollees !== undefined && r.average_enrollees !== ''
-      ? Number(r.average_enrollees)
-      : 0;
+    let avgVal =
+      r.average_enrollees !== null && r.average_enrollees !== undefined && r.average_enrollees !== ''
+        ? Number(r.average_enrollees)
+        : 0;
     if (isNaN(avgVal) || avgVal === 0) {
       const nonZero = history.filter((h) => h.count > 0);
       if (nonZero.length > 0) {
@@ -424,7 +612,10 @@ function parseFlatForm1Rows(rows: any[]): Form1ProgramItem[] {
       }
     }
 
-    const majorClean = cleanText(r.major_specialization) || undefined;
+    const majorClean = r._majorClean || undefined;
+    const boardResolutions: Form1BoardResolution[] = r._boardResolutions || [];
+    const primaryAuth = boardResolutions.map((b) => b.text).join('\n') || cleanText(r.board_reso_no);
+    const primaryAuthLink = boardResolutions[0]?.link || cleanLink(r.board_reso_link);
 
     return {
       id: `sp-${rowId}`,
@@ -432,17 +623,26 @@ function parseFlatForm1Rows(rows: any[]): Form1ProgramItem[] {
       name: progName,
       major: majorClean,
       majorLink: cleanLink(r.major_specialization_link),
-      authority: cleanText(r.board_reso_no),
-      authorityLink: cleanLink(r.board_reso_link),
+      authority: primaryAuth,
+      authorityLink: primaryAuthLink,
+      boardResolutions,
       copcStatus: cleanText(r.copc_no),
       copcRaw: cleanText(r.copc_no),
       copcLink: cleanLink(r.copc_link),
       syStarted: cleanText(r.school_year_started),
       researchCourse: cleanText(r.research_course_titles),
-      researchUnits: r.research_units !== null && r.research_units !== undefined && r.research_units !== 'None' ? String(r.research_units) : '',
+      researchCourseLink: cleanLink(r.research_course_titles_link),
+      researchUnits:
+        r.research_units !== null && r.research_units !== undefined && r.research_units !== 'None'
+          ? String(r.research_units)
+          : '',
       researchReqElec: cleanText(r.research_required),
       thesisDissertation: cleanText(r.thesis_course_title),
-      thesisUnits: r.thesis_units !== null && r.thesis_units !== undefined && r.thesis_units !== 'None' ? String(r.thesis_units) : '',
+      thesisDissertationLink: cleanLink(r.thesis_course_title_link),
+      thesisUnits:
+        r.thesis_units !== null && r.thesis_units !== undefined && r.thesis_units !== 'None'
+          ? String(r.thesis_units)
+          : '',
       prereqToGrad: cleanText(r.thesis_prerequisite),
       averageEnrollment: Number(avgVal || 0),
       enrollmentHistory: history,
@@ -521,7 +721,7 @@ function parseForm1Response(
     let campusCategory: 'Main' | 'Pagadian' | 'Dumingag' | 'CMSE' = 'Main';
     if (campusRaw.includes('pagadian')) campusCategory = 'Pagadian';
     else if (campusRaw.includes('dumingag')) campusCategory = 'Dumingag';
-    else if (campusRaw.includes('cmse')) campusCategory = 'CMSE';
+    else if (campusRaw.includes('cmse') || campusRaw.includes('lakewood')) campusCategory = 'CMSE';
 
     const rawProgName = off.program_name || '';
     const progNameLower = rawProgName.toLowerCase();
@@ -533,11 +733,23 @@ function parseForm1Response(
       levelCategory = 'Masteral';
     }
 
-    const groupName = `${campusCategory} Campus — ${levelCategory} Programs`;
+    const campusDisplay = campusCategory === 'CMSE' ? 'Lakewood' : campusCategory;
+    const groupName = `${campusDisplay} Campus — ${levelCategory} Programs`;
 
     const majorMatch = findEvidenceFileMatch(off.major_specialization, evidenceFiles);
     const authMatch = findEvidenceFileMatch(off.board_resolution_no, evidenceFiles);
     const copcMatch = findEvidenceFileMatch(off.copc_raw, evidenceFiles) || findEvidenceFileMatch(off.copc_no, evidenceFiles);
+
+    const authText = off.board_resolution_no || '';
+    const boardResolutions: Form1BoardResolution[] = authText
+      ? [
+          {
+            text: authText,
+            link: authMatch?.drive_url,
+            fileId: authMatch?.drive_file_id || undefined,
+          },
+        ]
+      : [];
 
     return {
       id: `sp-${offId || index}`,
@@ -546,9 +758,10 @@ function parseForm1Response(
       major: off.major_specialization || undefined,
       majorLink: majorMatch?.drive_url,
       majorFileId: majorMatch?.drive_file_id || undefined,
-      authority: off.board_resolution_no || '',
+      authority: authText,
       authorityLink: authMatch?.drive_url,
       authorityFileId: authMatch?.drive_file_id || undefined,
+      boardResolutions,
       copcStatus: off.copc_no || '',
       copcRaw: off.copc_raw || off.copc_no || '',
       copcLink: copcMatch?.drive_url,
@@ -702,11 +915,14 @@ export const Form1Page: React.FC = () => {
         (selectedLevel === 'Masteral' && item.level === 'Masteral') ||
         (selectedLevel === 'Undergraduate' && item.level === 'Undergraduate');
 
+      const q = searchQuery.toLowerCase();
       const matchQuery =
         !searchQuery ||
-        item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (item.major && item.major.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        item.researchCourse.toLowerCase().includes(searchQuery.toLowerCase());
+        item.name.toLowerCase().includes(q) ||
+        (item.major && item.major.toLowerCase().includes(q)) ||
+        item.researchCourse.toLowerCase().includes(q) ||
+        item.authority.toLowerCase().includes(q) ||
+        (item.boardResolutions && item.boardResolutions.some((br) => br.text.toLowerCase().includes(q)));
 
       return matchCampus && matchLevel && matchQuery;
     });
@@ -1133,7 +1349,7 @@ export const Form1Page: React.FC = () => {
                   { id: 'Main', label: 'Main', count: campusCounts.main },
                   { id: 'Pagadian', label: 'Pagadian', count: campusCounts.pagadian },
                   { id: 'Dumingag', label: 'Dumingag', count: campusCounts.dumingag },
-                  { id: 'CMSE', label: 'CMSE', count: campusCounts.cmse },
+                  { id: 'CMSE', label: 'Lakewood', count: campusCounts.cmse },
                 ].map((c) => (
                   <button
                     key={c.id}
@@ -1341,18 +1557,63 @@ export const Form1Page: React.FC = () => {
                               )}
                             </div>
 
-                            {/* Two-Column Grid Body */}
+                            {/* Paired Row-Aligned Two-Column Grid Body */}
                             <div className="p-6 flex-1 flex flex-col justify-between space-y-4 min-w-0">
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 text-xs min-w-0">
-                                {/* Left Column */}
-                                <div className="space-y-4 min-w-0">
+                              <div className="space-y-4 text-xs min-w-0">
+                                {/* Row 1: Board Resolution(s) (Left) & COPC (Right) */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 items-start min-w-0">
                                   {/* Board Resolution */}
                                   <div className="min-w-0">
-                                    <div className="text-[10px] font-bold tracking-wider text-[#64748B] uppercase mb-1">
-                                      BOARD RESOLUTION
+                                    <div className="flex items-center gap-1.5 text-[10px] font-bold tracking-wider text-[#64748B] uppercase mb-1.5">
+                                      <span>
+                                        {row.boardResolutions && row.boardResolutions.length > 1
+                                          ? 'BOARD RESOLUTIONS'
+                                          : 'BOARD RESOLUTION'}
+                                      </span>
+                                      {row.boardResolutions && row.boardResolutions.length > 1 && (
+                                        <span className="inline-flex items-center justify-center px-1.5 py-0.2 rounded-full text-[9.5px] font-extrabold bg-[#E3EFE8] text-[#1E4D2B]">
+                                          {row.boardResolutions.length}
+                                        </span>
+                                      )}
                                     </div>
                                     <div className="font-semibold text-[#15221A] text-xs leading-snug break-words [overflow-wrap:anywhere]">
-                                      {row.authorityLink ? (
+                                      {row.boardResolutions && row.boardResolutions.length > 1 ? (
+                                        <div className="flex flex-wrap gap-1.5">
+                                          {row.boardResolutions.map((br, brIdx) => (
+                                            <div
+                                              key={`${row.id}-card-br-${brIdx}`}
+                                              className="inline-flex items-center gap-1.5 bg-[#F4F6F1] hover:bg-[#E3EFE8]/60 border border-[#E2E8F0] hover:border-[#1E4D2B]/30 rounded-lg px-2.5 py-1 transition-colors max-w-full"
+                                            >
+                                              <span className="w-1.5 h-1.5 rounded-full bg-[#1E4D2B] shrink-0" />
+                                              <div className="min-w-0 break-words [overflow-wrap:anywhere]">
+                                                {br.link ? (
+                                                  <GoogleDrivePreviewCell
+                                                    text={br.text}
+                                                    explicitUrl={br.link}
+                                                    explicitFileId={br.fileId}
+                                                    columnType="authority"
+                                                  />
+                                                ) : (
+                                                  <span className="break-words [overflow-wrap:anywhere]">{br.text}</span>
+                                                )}
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : row.boardResolutions && row.boardResolutions.length === 1 ? (
+                                        row.boardResolutions[0].link ? (
+                                          <GoogleDrivePreviewCell
+                                            text={row.boardResolutions[0].text}
+                                            explicitUrl={row.boardResolutions[0].link}
+                                            explicitFileId={row.boardResolutions[0].fileId}
+                                            columnType="authority"
+                                          />
+                                        ) : (
+                                          <span className="break-words [overflow-wrap:anywhere]">
+                                            {row.boardResolutions[0].text}
+                                          </span>
+                                        )
+                                      ) : row.authorityLink ? (
                                         <GoogleDrivePreviewCell
                                           text={row.authority || '—'}
                                           explicitUrl={row.authorityLink}
@@ -1365,50 +1626,9 @@ export const Form1Page: React.FC = () => {
                                     </div>
                                   </div>
 
-                                  {/* Research Course */}
-                                  <div className="min-w-0">
-                                    <div className="text-[10px] font-bold tracking-wider text-[#64748B] uppercase mb-1">
-                                      RESEARCH COURSE
-                                    </div>
-                                    <div className="text-xs text-[#15221A] font-normal leading-snug break-words [overflow-wrap:anywhere]">
-                                      {row.researchCourse ? (
-                                        <>
-                                          <GoogleDrivePreviewCell text={row.researchCourse} />
-                                          {row.researchUnits ? (
-                                            <span className="text-[#64748B] ml-1 font-medium">({row.researchUnits} units)</span>
-                                          ) : null}
-                                        </>
-                                      ) : (
-                                        <span className="text-[#94A3B8]">—</span>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  {/* Thesis / Dissertation */}
-                                  <div className="min-w-0">
-                                    <div className="text-[10px] font-bold tracking-wider text-[#64748B] uppercase mb-1">
-                                      THESIS / DISSERTATION
-                                    </div>
-                                    <div className="text-xs text-[#15221A] font-normal leading-snug break-words [overflow-wrap:anywhere]">
-                                      {row.thesisDissertation ? (
-                                        <>
-                                          <GoogleDrivePreviewCell text={row.thesisDissertation} />
-                                          {row.thesisUnits ? (
-                                            <span className="text-[#64748B] ml-1 font-medium">({row.thesisUnits} units)</span>
-                                          ) : null}
-                                        </>
-                                      ) : (
-                                        <span className="text-[#94A3B8]">—</span>
-                                      )}
-                                    </div>
-                                  </div>
-                                </div>
-
-                                {/* Right Column */}
-                                <div className="space-y-4 min-w-0">
                                   {/* COPC */}
                                   <div className="min-w-0">
-                                    <div className="text-[10px] font-bold tracking-wider text-[#64748B] uppercase mb-1">
+                                    <div className="text-[10px] font-bold tracking-wider text-[#64748B] uppercase mb-1.5">
                                       COPC
                                     </div>
                                     <div className="font-semibold text-[#15221A] text-xs leading-snug break-words [overflow-wrap:anywhere]">
@@ -1420,12 +1640,41 @@ export const Form1Page: React.FC = () => {
                                           columnType="copc"
                                         />
                                       ) : (
-                                        <span className="break-words [overflow-wrap:anywhere]">{(row.copcRaw || row.copcStatus || '—').replace(/^✓\s*/, '')}</span>
+                                        <span className="break-words [overflow-wrap:anywhere]">
+                                          {(row.copcRaw || row.copcStatus || '—').replace(/^✓\s*/, '')}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Row 2: Research Course (Left) ↔ Required or Elective? (Right) */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 items-start min-w-0">
+                                  {/* Research Course */}
+                                  <div className="min-w-0">
+                                    <div className="text-[10px] font-bold tracking-wider text-[#64748B] uppercase mb-1">
+                                      RESEARCH COURSE
+                                    </div>
+                                    <div className="text-xs text-[#15221A] font-normal leading-snug break-words [overflow-wrap:anywhere]">
+                                      {row.researchCourse ? (
+                                        <>
+                                          <GoogleDrivePreviewCell
+                                            text={row.researchCourse}
+                                            explicitUrl={row.researchCourseLink}
+                                          />
+                                          {row.researchUnits ? (
+                                            <span className="text-[#64748B] ml-1 font-medium">
+                                              ({row.researchUnits} units)
+                                            </span>
+                                          ) : null}
+                                        </>
+                                      ) : (
+                                        <span className="text-[#94A3B8]">—</span>
                                       )}
                                     </div>
                                   </div>
 
-                                  {/* Required or Elective */}
+                                  {/* Required or Elective? */}
                                   <div className="min-w-0">
                                     <div className="text-[10px] font-bold tracking-wider text-[#64748B] uppercase mb-1">
                                       REQUIRED OR ELECTIVE?
@@ -1434,8 +1683,35 @@ export const Form1Page: React.FC = () => {
                                       {row.researchReqElec || '—'}
                                     </div>
                                   </div>
+                                </div>
 
-                                  {/* Pre-req to Grad */}
+                                {/* Row 3: Thesis / Dissertation (Left) ↔ Pre-req to Grad? (Right) */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 items-start min-w-0">
+                                  {/* Thesis / Dissertation */}
+                                  <div className="min-w-0">
+                                    <div className="text-[10px] font-bold tracking-wider text-[#64748B] uppercase mb-1">
+                                      THESIS / DISSERTATION
+                                    </div>
+                                    <div className="text-xs text-[#15221A] font-normal leading-snug break-words [overflow-wrap:anywhere]">
+                                      {row.thesisDissertation ? (
+                                        <>
+                                          <GoogleDrivePreviewCell
+                                            text={row.thesisDissertation}
+                                            explicitUrl={row.thesisDissertationLink}
+                                          />
+                                          {row.thesisUnits ? (
+                                            <span className="text-[#64748B] ml-1 font-medium">
+                                              ({row.thesisUnits} units)
+                                            </span>
+                                          ) : null}
+                                        </>
+                                      ) : (
+                                        <span className="text-[#94A3B8]">—</span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Pre-req to Grad? */}
                                   <div className="min-w-0">
                                     <div className="text-[10px] font-bold tracking-wider text-[#64748B] uppercase mb-1">
                                       PRE-REQ TO GRAD?
@@ -1607,7 +1883,41 @@ export const Form1Page: React.FC = () => {
 
                                 {/* Authority to Operate */}
                                 <td className="py-3 px-2.5 text-[#334155] font-normal text-[11px] align-top break-words">
-                                  {row.authorityLink ? (
+                                  {row.boardResolutions && row.boardResolutions.length > 1 ? (
+                                    <div className="flex flex-col gap-1.5">
+                                      {row.boardResolutions.map((br, brIdx) => (
+                                        <div
+                                          key={`${row.id}-tbl-br-${brIdx}`}
+                                          className="inline-flex items-start gap-1.5 bg-[#F8FAFC] hover:bg-[#E3EFE8]/50 border border-[#E2E8F0] rounded-md px-2 py-1 leading-snug transition-colors"
+                                        >
+                                          <span className="w-1.5 h-1.5 rounded-full bg-[#1E4D2B] shrink-0 mt-1.5" />
+                                          <div className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">
+                                            {br.link ? (
+                                              <GoogleDrivePreviewCell
+                                                text={br.text}
+                                                explicitUrl={br.link}
+                                                explicitFileId={br.fileId}
+                                                columnType="authority"
+                                              />
+                                            ) : (
+                                              <span>{br.text}</span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : row.boardResolutions && row.boardResolutions.length === 1 ? (
+                                    row.boardResolutions[0].link ? (
+                                      <GoogleDrivePreviewCell
+                                        text={row.boardResolutions[0].text}
+                                        explicitUrl={row.boardResolutions[0].link}
+                                        explicitFileId={row.boardResolutions[0].fileId}
+                                        columnType="authority"
+                                      />
+                                    ) : (
+                                      <span>{row.boardResolutions[0].text}</span>
+                                    )
+                                  ) : row.authorityLink ? (
                                     <GoogleDrivePreviewCell
                                       text={row.authority}
                                       explicitUrl={row.authorityLink}
@@ -1633,7 +1943,10 @@ export const Form1Page: React.FC = () => {
                                 <td className="py-3 px-2.5 text-[#334155] text-[11px] align-top break-words">
                                   {row.researchCourse ? (
                                     <div>
-                                      <GoogleDrivePreviewCell text={row.researchCourse} />{' '}
+                                      <GoogleDrivePreviewCell
+                                        text={row.researchCourse}
+                                        explicitUrl={row.researchCourseLink}
+                                      />{' '}
                                       {row.researchUnits ? <span className="text-[#64748B]">({row.researchUnits} units)</span> : null}
                                     </div>
                                   ) : null}
@@ -1648,7 +1961,10 @@ export const Form1Page: React.FC = () => {
                                 <td className="py-3 px-2.5 text-[#334155] text-[11px] align-top break-words">
                                   {row.thesisDissertation ? (
                                     <div>
-                                      <GoogleDrivePreviewCell text={row.thesisDissertation} />{' '}
+                                      <GoogleDrivePreviewCell
+                                        text={row.thesisDissertation}
+                                        explicitUrl={row.thesisDissertationLink}
+                                      />{' '}
                                       {row.thesisUnits ? <span className="text-[#64748B]">({row.thesisUnits} units)</span> : null}
                                     </div>
                                   ) : null}

@@ -62,10 +62,10 @@ export const CAMPUS_TABS: {
   { id: 'Main', code: 'MAIN', tabLabel: 'Main campus', shortName: 'Main', fullLabel: 'Main Campus' },
   { id: 'Pagadian', code: 'PAGADIAN', tabLabel: 'Pagadian', shortName: 'Pagadian', fullLabel: 'Pagadian Campus' },
   { id: 'Dumingag', code: 'DUMINGAG', tabLabel: 'Dumingag', shortName: 'Dumingag', fullLabel: 'Dumingag Campus' },
-  { id: 'CMSE', code: 'CMSE', tabLabel: 'CMSE (Lakewood)', shortName: 'CMSE', fullLabel: 'CMSE (Lakewood) Campus' }
+  { id: 'CMSE', code: 'LAKEWOOD', tabLabel: 'Lakewood', shortName: 'Lakewood', fullLabel: 'Lakewood Campus' }
 ];
 
-const FORM5_CACHE_KEY = 'jhcsc_form5_supabase_v14';
+const FORM5_CACHE_KEY = 'jhcsc_form5_supabase_v15';
 const FORM5_SPREADSHEET_URL =
   'https://docs.google.com/spreadsheets/d/1wsKc3p8Wn6KnZnUNm5tHSVRPX62kJmxk9jfLgXamPhk/edit?usp=sharing';
 
@@ -752,7 +752,10 @@ function normalizeDatabaseNarrative(desc?: string | null): string {
   if (isPlaceholderNarrative(trimmed)) {
     return '';
   }
-  return trimmed;
+  return trimmed
+    .replace(/\bCMSE\s*\((?:Lakewood)\)/gi, 'Lakewood')
+    .replace(/\bCanuto\s+M\.?\s*S\.?\s*Enerio\s*\(?CMSE\)?/gi, 'Lakewood')
+    .replace(/\bCMSE\b/g, 'Lakewood');
 }
 
 function normalizeReqDedupeKey(req: string): string {
@@ -773,7 +776,10 @@ function cleanEvidenceDisplayLabel(rawText?: string | null): string {
   if (!withoutUrls || isPlaceholderEvidenceText(withoutUrls)) {
     return '';
   }
-  return withoutUrls;
+  return withoutUrls
+    .replace(/\bCMSE\s*\((?:Lakewood)\)/gi, 'Lakewood')
+    .replace(/\bCanuto\s+M\.?\s*S\.?\s*Enerio\s*\(?CMSE\)?/gi, 'Lakewood')
+    .replace(/\bCMSE\b/g, 'Lakewood');
 }
 
 function resolveEvidenceRowLink(ev: Form5EvidenceDbRow): string | undefined {

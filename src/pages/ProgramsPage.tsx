@@ -97,7 +97,7 @@ export const CAMPUS_GROUPS: {
   { id: 'Main Campus', label: 'Main Campus' },
   { id: 'Dumingag Campus', label: 'Dumingag Campus' },
   { id: 'Pagadian Campus', label: 'Pagadian Campus' },
-  { id: 'CMSE Campus', label: 'CMSE Campus' }
+  { id: 'CMSE Campus', label: 'Lakewood Campus' }
 ];
 
 export const AREA_DEFINITIONS: {
@@ -188,7 +188,12 @@ function formatDatabaseCellText(raw: string, areaContext = ''): string {
     }
   }
 
-  return text.replace(/\n{3,}/g, '\n\n').trim();
+  return text
+    .replace(/\bCMSE\s*\((?:Lakewood)\)/gi, 'Lakewood')
+    .replace(/\bCanuto\s+M\.?\s*S\.?\s*Enerio\s*\(?CMSE\)?/gi, 'Lakewood')
+    .replace(/\bCMSE\b/g, 'Lakewood')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 function resolveSheetMetadata(
@@ -207,7 +212,7 @@ function resolveSheetMetadata(
   const cLower = (dbCampus || '').toLowerCase();
 
   let campus: CampusId = 'Main Campus';
-  if (sLower.startsWith('cmse_') || sLower.startsWith('copy of cmse_')) {
+  if (sLower.startsWith('cmse_') || sLower.startsWith('lakewood_') || sLower.startsWith('copy of cmse_') || sLower.startsWith('copy of lakewood_')) {
     campus = 'CMSE Campus';
   } else if (sLower.startsWith('pagadian_') || sLower.startsWith('copy of pagadian_')) {
     campus = 'Pagadian Campus';
@@ -219,7 +224,7 @@ function resolveSheetMetadata(
     campus = 'Dumingag Campus';
   } else if (sLower.startsWith('main_') || sLower.startsWith('copy of main_') || sLower === 'phd_elt') {
     campus = 'Main Campus';
-  } else if (cLower.includes('cmse') || cLower.includes('canuto') || cLower.includes('enerio')) {
+  } else if (cLower.includes('cmse') || cLower.includes('lakewood') || cLower.includes('canuto') || cLower.includes('enerio')) {
     campus = 'CMSE Campus';
   } else if (cLower.includes('pagadian')) {
     campus = 'Pagadian Campus';
@@ -228,7 +233,7 @@ function resolveSheetMetadata(
   }
 
   const rawCode = sheetName
-    .replace(/^(Copy of (Main_|Dumingag_|Duimngag_|Pagadian_|CMSE_)|Main_|Dumingag_|Duimngag_|Pagadian_|CMSE_)/i, '')
+    .replace(/^(Copy of (Main_|Dumingag_|Duimngag_|Pagadian_|CMSE_|Lakewood_)|Main_|Dumingag_|Duimngag_|Pagadian_|CMSE_|Lakewood_)/i, '')
     .replace(/_/g, ' ')
     .trim();
   const code = sheetName.startsWith('Copy of ') ? `${rawCode} (Copy)` : rawCode || sheetName;
@@ -506,6 +511,11 @@ function extractEvidencesForRow(
           label = `Evidence Document ${indexHint}`;
         }
       }
+
+      label = label
+        .replace(/\bCMSE\s*\((?:Lakewood)\)/gi, 'Lakewood')
+        .replace(/\bCanuto\s+M\.?\s*S\.?\s*Enerio\s*\(?CMSE\)?/gi, 'Lakewood')
+        .replace(/\bCMSE\b/g, 'Lakewood');
 
       results.push({
         id: `${row.id}-ev-${results.length + 1}`,
@@ -1204,7 +1214,7 @@ export const ProgramsPage: React.FC<ProgramsPageProps> = ({ initialCampus }) => 
                     {/* Brand Metadata Line */}
                     <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-[#F5F2E6]/85">
                       <span className="font-bold text-[#E8AE1F] uppercase tracking-wider">
-                        {currentProgram.campus}
+                        {currentProgram.campus === 'CMSE Campus' ? 'Lakewood Campus' : currentProgram.campus}
                       </span>
                       <span aria-hidden="true" className="text-[#F5F2E6]/40">
                         ·

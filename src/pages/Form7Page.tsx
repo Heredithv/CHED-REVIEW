@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ExternalLink, Search, ChevronDown, Loader2 } from 'lucide-react';
 import { InnerHeroBand } from '../components/InnerHeroBand';
-import { getForm7ResearchLinkages, getSupabaseClient } from '../data/api';
+import { getSupabaseClient } from '../data/api';
 import { DocumentLinkPreview } from '../components/DocumentLinkPreview';
 
 export interface Form7DbRow {
@@ -32,7 +32,12 @@ export interface PartnershipItem {
   driveLink: string | null;
 }
 
-const FORM7_CACHE_KEY = 'jhcsc_form7_supabase_v1';
+const FORM7_CACHE_KEY = 'jhcsc_form7_supabase_v2';
+if (typeof window !== 'undefined') {
+  try {
+    localStorage.removeItem('jhcsc_form7_supabase_v1');
+  } catch {}
+}
 let cachedForm7Partnerships: PartnershipItem[] | null = null;
 let prefetchForm7Promise: Promise<PartnershipItem[] | null> | null = null;
 
@@ -184,31 +189,38 @@ function transformSupabaseRowToPartnershipItem(row: Form7DbRow & Record<string, 
 }
 
 export async function fetchForm7Partnerships(): Promise<PartnershipItem[]> {
-  const res = await getForm7ResearchLinkages();
-  if (res.error) {
-    throw new Error(res.error);
+  const client = getSupabaseClient();
+  if (!client) {
+    throw new Error('Supabase client could not be initialized.');
   }
-  const rows = Array.isArray(res.data) ? res.data : [];
+  const { data, error } = await client.from('form7').select('*').order('id', { ascending: true });
+  if (error) {
+    throw new Error(error.message);
+  }
+  const rows = Array.isArray(data) ? data : [];
   const mapped = rows
     .filter((r) => !isForm7HeaderOrEmptyRow(r))
     .map(transformSupabaseRowToPartnershipItem);
 
-  cachedForm7Partnerships = mapped;
-  try {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(FORM7_CACHE_KEY, JSON.stringify(mapped));
-    }
-  } catch {}
+  if (mapped.length > 0) {
+    cachedForm7Partnerships = mapped;
+    try {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(FORM7_CACHE_KEY, JSON.stringify(mapped));
+        sessionStorage.setItem(FORM7_CACHE_KEY, JSON.stringify(mapped));
+      }
+    } catch {}
+  }
   return mapped;
 }
 
 export function preloadForm7Data(): Promise<PartnershipItem[] | null> {
-  if (cachedForm7Partnerships) return Promise.resolve(cachedForm7Partnerships);
+  if (cachedForm7Partnerships && cachedForm7Partnerships.length > 0) return Promise.resolve(cachedForm7Partnerships);
   if (prefetchForm7Promise) return prefetchForm7Promise;
 
   if (typeof window !== 'undefined') {
     try {
-      const saved = localStorage.getItem(FORM7_CACHE_KEY);
+      const saved = localStorage.getItem(FORM7_CACHE_KEY) || sessionStorage.getItem(FORM7_CACHE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
@@ -232,10 +244,10 @@ export function preloadForm7Data(): Promise<PartnershipItem[] | null> {
 
 export const Form7Page: React.FC = () => {
   const [partnerships, setPartnerships] = useState<PartnershipItem[]>(() => {
-    if (cachedForm7Partnerships) return cachedForm7Partnerships;
+    if (cachedForm7Partnerships && cachedForm7Partnerships.length > 0) return cachedForm7Partnerships;
     if (typeof window !== 'undefined') {
       try {
-        const saved = localStorage.getItem(FORM7_CACHE_KEY);
+        const saved = localStorage.getItem(FORM7_CACHE_KEY) || sessionStorage.getItem(FORM7_CACHE_KEY);
         if (saved) {
           const parsed = JSON.parse(saved);
           if (Array.isArray(parsed) && parsed.length > 0) {
@@ -266,7 +278,7 @@ export const Form7Page: React.FC = () => {
       setError(null);
       try {
         const mapped = await fetchForm7Partnerships();
-        if (isMounted) {
+        if (isMounted && mapped) {
           setPartnerships(mapped);
         }
       } catch (err: any) {

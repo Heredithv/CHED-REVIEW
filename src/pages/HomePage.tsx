@@ -100,9 +100,9 @@ const CAMPUS_3D_TOURS: Campus3DTourGroup[] = [
     ],
   },
   {
-    campusName: 'CMSE (Lakewood)',
-    buttonName: 'CMSE (Lakewood)',
-    shortName: 'CMSE',
+    campusName: 'Lakewood Campus',
+    buttonName: 'Lakewood Campus',
+    shortName: 'Lakewood',
     municipality: 'Lakewood, Zamboanga del Sur',
     sites: [
       {
@@ -154,15 +154,39 @@ const StatCounter: React.FC<StatCounterProps> = ({ value, className, style }) =>
   );
 };
 
+let cachedHomeStats: { value: string; label: string }[] | null = null;
+let cachedHomeCampusCards: CampusScorecard[] | null = null;
+let cachedHomeCampusSubtitle: string | null = null;
+const HOME_STATS_CACHE_KEY = 'jhcsc_home_live_stats_v2';
+
 export const HomePage: React.FC = () => {
   // Intersection observer to add reveal transitions as sections enter/exit viewport
   const [visibleSections, setVisibleSections] = useState<Record<string, boolean>>({});
   const [scrollY, setScrollY] = useState(0);
 
-  const [stats, setStats] = useState(siteContent.hero.stats);
-  const [loadingStats, setLoadingStats] = useState(true);
-  const [campusCards, setCampusCards] = useState<CampusScorecard[]>(siteContent.campusesSection.campuses);
-  const [campusSubtitle, setCampusSubtitle] = useState<string>(siteContent.campusesSection.subtitle);
+  const [stats, setStats] = useState<{ value: string; label: string }[]>(() => {
+    if (cachedHomeStats && cachedHomeStats.length > 0) return cachedHomeStats;
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem(HOME_STATS_CACHE_KEY);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length === 4) {
+            cachedHomeStats = parsed;
+            return parsed;
+          }
+        }
+      } catch {}
+    }
+    return siteContent.hero.stats;
+  });
+  const [loadingStats, setLoadingStats] = useState<boolean>(() => !cachedHomeStats);
+  const [campusCards, setCampusCards] = useState<CampusScorecard[]>(
+    () => cachedHomeCampusCards || siteContent.campusesSection.campuses
+  );
+  const [campusSubtitle, setCampusSubtitle] = useState<string>(
+    () => cachedHomeCampusSubtitle || siteContent.campusesSection.subtitle
+  );
   const [showFullMessage, setShowFullMessage] = useState(false);
 
   // Interactive 3D Campus Map Walkthrough state
@@ -174,22 +198,24 @@ export const HomePage: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
+    let isMounted = true;
+
     async function fetchLiveDatabaseAnalytics() {
       try {
         const client = getSupabaseClient();
         if (!client) {
-          setLoadingStats(false);
+          if (isMounted) setLoadingStats(false);
           return;
         }
 
-        const [form1Res, form2Res, programSheets] = await Promise.all([
+        // Step 1: Immediately fetch lightweight Form 1 & Form 2 counts for the top stats bar
+        const [form1Res, form2Res] = await Promise.all([
           client
             .from('form1')
             .select('row_id,campus_name,program_offering,enrollees_sy26_27,enrollees_sy25_26,average_enrollees'),
           client
             .from('form2')
-            .select('row_id,is_full_time_permanent,is_full_time_contractual,is_part_time'),
-          preloadProgramsData(true)
+            .select('row_id,is_full_time_permanent,is_full_time_contractual,is_part_time')
         ]);
 
         const form1Rows = form1Res.data || [];
@@ -208,9 +234,10 @@ export const HomePage: React.FC = () => {
 
           const totalPrograms = form1Rows.length;
 
-          const fullTimeFacultyCount = form2Rows.filter(
-            (r: any) => Boolean(r.is_full_time_permanent) || Boolean(r.is_full_time_contractual)
-          ).length || form2Rows.length;
+          const fullTimeFacultyCount =
+            form2Rows.filter(
+              (r: any) => Boolean(r.is_full_time_permanent) || Boolean(r.is_full_time_contractual)
+            ).length || form2Rows.length;
 
           const campusSet = new Set<string>();
           form1Rows.forEach((r: any) => {
@@ -222,20 +249,37 @@ export const HomePage: React.FC = () => {
           });
           const campusesCount = campusSet.size || 4;
 
-          setStats([
+          const nextStats = [
             { value: totalEnrollment.toLocaleString('en-US'), label: 'students enrolled' },
             { value: totalPrograms.toLocaleString('en-US'), label: 'degree programs' },
             { value: fullTimeFacultyCount.toLocaleString('en-US'), label: 'full-time faculty' },
             { value: campusesCount.toLocaleString('en-US'), label: 'campuses' }
-          ]);
+          ];
+
+          cachedHomeStats = nextStats;
+          try {
+            if (typeof window !== 'undefined') {
+              localStorage.setItem(HOME_STATS_CACHE_KEY, JSON.stringify(nextStats));
+            }
+          } catch {}
+
+          if (isMounted) {
+            setStats(nextStats);
+            setLoadingStats(false);
+          }
+        } else if (isMounted) {
+          setLoadingStats(false);
         }
+
+        // Step 2: Load programmatic compliance sheets in the background for the campus scorecards section
+        const programSheets = await preloadProgramsData(false);
 
         if (programSheets && programSheets.length > 0) {
           const campusDefs: { name: string; campusId: CampusId; campusFilter: string }[] = [
             { name: 'Main', campusId: 'Main Campus', campusFilter: 'Main campus' },
             { name: 'Dumingag', campusId: 'Dumingag Campus', campusFilter: 'Dumingag campus' },
             { name: 'Pagadian', campusId: 'Pagadian Campus', campusFilter: 'Pagadian campus' },
-            { name: 'CMSE (Lakewood)', campusId: 'CMSE Campus', campusFilter: 'CMSE (Lakewood)' }
+            { name: 'Lakewood', campusId: 'CMSE Campus', campusFilter: 'Lakewood' }
           ];
 
           let allComplied = 0;
@@ -295,18 +339,25 @@ export const HomePage: React.FC = () => {
           });
 
           const overallPercent = allTotal > 0 ? Math.round((allComplied / allTotal) * 100) : 0;
-          setCampusCards(liveCards);
-          setCampusSubtitle(
-            `${allComplied.toLocaleString('en-US')} of ${allTotal.toLocaleString('en-US')} requirement checks across ${allPrograms} program forms are marked complied (${overallPercent}%), with ${allNotComplied.toLocaleString('en-US')} not complied and ${allPending.toLocaleString('en-US')} pending.`
-          );
+          const nextSubtitle = `${allComplied.toLocaleString('en-US')} of ${allTotal.toLocaleString('en-US')} requirement checks across ${allPrograms} program forms are marked complied (${overallPercent}%), with ${allNotComplied.toLocaleString('en-US')} not complied and ${allPending.toLocaleString('en-US')} pending.`;
+          cachedHomeCampusCards = liveCards;
+          cachedHomeCampusSubtitle = nextSubtitle;
+          if (isMounted) {
+            setCampusCards(liveCards);
+            setCampusSubtitle(nextSubtitle);
+          }
         }
       } catch (err) {
         console.error('Error loading live database analytics from Supabase:', err);
       } finally {
-        setLoadingStats(false);
+        if (isMounted) setLoadingStats(false);
       }
     }
     fetchLiveDatabaseAnalytics();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -985,7 +1036,7 @@ export const HomePage: React.FC = () => {
                     in three dimensions
                   </h2>
                   <p className="text-sm sm:text-[15.5px] text-[#475569] leading-[1.7] mt-3 font-normal max-w-[520px]">
-                    3D walkthrough videos of J.H. Cerilles State College buildings and facilities across Main, Dumingag, Pagadian, and CMSE Lakewood.
+                    3D walkthrough videos of J.H. Cerilles State College buildings and facilities across Main, Dumingag, Pagadian, and Lakewood.
                   </p>
                 </div>
 
@@ -1079,7 +1130,7 @@ export const HomePage: React.FC = () => {
                         controls={isPlaying}
                         playsInline
                         muted={isMuted}
-                        preload="auto"
+                        preload="metadata"
                         onPlay={() => setIsPlaying(true)}
                         onEnded={handleNextTour}
                         onLoadedMetadata={(e) => {

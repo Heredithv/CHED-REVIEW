@@ -67,15 +67,326 @@ export interface Form3FacultyItem {
   sourceExcelRow?: number;
 }
 
-const FORM3_FACULTY_CACHE_KEY = 'jhcsc_form3_faculty_v9';
-const FORM3_SUMMARY_CACHE_KEY = 'jhcsc_form3_summary_v9';
+const FORM3_FACULTY_CACHE_KEY = 'jhcsc_form3_faculty_v11';
+const FORM3_SUMMARY_CACHE_KEY = 'jhcsc_form3_summary_v11';
+
+if (typeof window !== 'undefined') {
+  try {
+    localStorage.removeItem('jhcsc_form3_faculty_v10');
+    localStorage.removeItem('jhcsc_form3_summary_v10');
+    sessionStorage.removeItem('jhcsc_form3_faculty_v10');
+    sessionStorage.removeItem('jhcsc_form3_summary_v10');
+  } catch {}
+}
 
 // Module-level in-memory cache for instant zero-delay switching
 let cachedForm3Faculty: Form3FacultyItem[] | null = null;
 let cachedForm3Summary: Form3SummaryDbRow[] | null = null;
+let prefetchForm3Promise: Promise<{ faculty: Form3FacultyItem[]; summary: Form3SummaryDbRow[] }> | null = null;
+
+export async function fetchAllForm3Data(): Promise<{
+  faculty: Form3FacultyItem[];
+  summary: Form3SummaryDbRow[];
+}> {
+  const client = getSupabaseClient();
+  if (!client) {
+    throw new Error('Supabase client could not be initialized.');
+  }
+
+  // Fetch Form 3 tables (`form3`, `form3_completed_researches`, `form3_summary`) in parallel
+  const [summaryRes, form3Res, completedRes] = await Promise.all([
+    client.from('form3_summary').select('*').order('id', { ascending: true }),
+    client.from('form3').select('*').order('row_id', { ascending: true }),
+    client.from('form3_completed_researches').select('*').order('id', { ascending: true }),
+  ]);
+
+  if (form3Res.error) {
+    throw new Error(`Failed to load Form 3 records: ${form3Res.error.message}`);
+  }
+
+  // 1. Process & Deduplicate Summary Data from `form3_summary`
+  const formatSummaryCampus = (raw: string): string => {
+    const upper = (raw || '').trim().toUpperCase();
+    if (upper.includes('MAIN')) return 'Main Campus';
+    if (upper.includes('PAGADIAN')) return 'Pagadian Campus';
+    if (upper.includes('DUMINGAG')) return 'Dumingag Campus';
+    if (upper.includes('CMSE') || upper.includes('CANUTO') || upper.includes('LAKEWOOD')) return 'Lakewood Campus';
+    if (upper.includes('ALL CAMPUSES')) return 'ALL CAMPUSES';
+    return (raw || '').trim();
+  };
+
+  const seenSummaryKeys = new Set<string>();
+  const fetchedSummary: Form3SummaryDbRow[] = [];
+  (summaryRes.data || []).forEach((row: any) => {
+    const campus = formatSummaryCampus(row.campus_name || row.campus || '');
+    const dept = String(row.school_name || row.department_or_academic_program || '').trim();
+    if (!campus && !dept) return;
+    const dedupKey = `${campus.toUpperCase()}|${dept.toUpperCase()}`;
+    if (seenSummaryKeys.has(dedupKey)) return;
+    seenSummaryKeys.add(dedupKey);
+
+    fetchedSummary.push({
+      campus,
+      department_or_academic_program: dept,
+      total_faculty: Number(row.no_of_faculty ?? row.total_faculty) || 0,
+      ongoing_faculty: Number(row.ongoing_number ?? row.ongoing_faculty) || 0,
+      ongoing_percentage: Number(row.ongoing_percent ?? row.ongoing_percentage) || 0,
+      completed_faculty: Number(row.completed_number ?? row.completed_faculty) || 0,
+      completed_percentage: Number(row.completed_percent ?? row.completed_percentage) || 0,
+      both_faculty: Number(row.both_number ?? row.both_faculty) || 0,
+      both_percentage: Number(row.both_percent ?? row.both_percentage) || 0,
+    });
+  });
+
+  // 2. Group & Deduplicate Completed Researches from `form3_completed_researches` by `row_id`
+  const rawCompletedByRowId: Record<number, { id: string; title: string; link: string | null }[]> = {};
+  (completedRes.data || []).forEach((cr: any) => {
+    const rowId = Number(cr.row_id);
+    const title = String(cr.research_title || '').trim();
+    const link = cr.drive_link ? String(cr.drive_link).trim() : null;
+    if (!rowId || !title) return;
+    if (!rawCompletedByRowId[rowId]) {
+      rawCompletedByRowId[rowId] = [];
+    }
+    const existing = rawCompletedByRowId[rowId].find(
+      (item) => item.title.toLowerCase() === title.toLowerCase()
+    );
+    if (existing) {
+      if (!existing.link && link) existing.link = link;
+    } else {
+      rawCompletedByRowId[rowId].push({
+        id: String(cr.id ?? `${rowId}-${rawCompletedByRowId[rowId].length + 1}`),
+        title,
+        link,
+      });
+    }
+  });
+
+  // 3. Build Faculty Profiles from `form3` joined with `form3_completed_researches`
+  const seenFacultyRowIds = new Set<number>();
+  const mappedFaculty: Form3FacultyItem[] = [];
+
+  (form3Res.data || []).forEach((f: any, idx: number) => {
+    const rowId = Number(f.row_id ?? idx + 1);
+    if (seenFacultyRowIds.has(rowId)) return;
+    seenFacultyRowIds.add(rowId);
+
+    const rawCampus = String(f.campus_name || f.campus || '').trim();
+    let campusCategory: 'Main' | 'Pagadian' | 'Dumingag' | 'CMSE' = 'Main';
+    const lowerCampus = rawCampus.toLowerCase();
+    if (lowerCampus.includes('pagadian')) campusCategory = 'Pagadian';
+    else if (lowerCampus.includes('dumingag')) campusCategory = 'Dumingag';
+    else if (lowerCampus.includes('cmse') || lowerCampus.includes('canuto') || lowerCampus.includes('lakewood')) campusCategory = 'CMSE';
+
+    const rawName = String(f.faculty_name || f.full_name || f.name || '').trim();
+    const rawDept = String(f.school_name || f.department_or_academic_program || f.department || '').trim();
+
+    const isPerm = Boolean(f.is_full_time_permanent ?? f.employment_permanent ?? f.full_time_permanent);
+    const isCont = Boolean(f.is_full_time_contractual ?? f.employment_contractual ?? f.full_time_contractual);
+    const isPart = Boolean(f.is_part_time ?? f.employment_part_time ?? f.part_time);
+    const status = isPerm ? 'Permanent' : isCont ? 'Contractual' : isPart ? 'Part-Time' : 'Permanent';
+
+    // Build Ongoing Research list from `form3` columns (supporting multiple ongoing studies separated by newline)
+    const ongoingList: Form3ResearchItem[] = [];
+    const rawOngoingTitles = f.ongoing_research_title ? String(f.ongoing_research_title).split(/\r?\n/) : [];
+    const rawOngoingStarts = f.ongoing_research_year_started ? String(f.ongoing_research_year_started).split(/\r?\n/) : [];
+    const rawOngoingFinishes = f.ongoing_research_expected_finish ? String(f.ongoing_research_expected_finish).split(/\r?\n/) : [];
+
+    rawOngoingTitles.forEach((rawTitle: string, oIdx: number) => {
+      const ongoingTitle = rawTitle.trim();
+      if (!ongoingTitle) return;
+      const startYr = (rawOngoingStarts[oIdx] ?? rawOngoingStarts[0] ?? '').trim() || null;
+      const finishYr = (rawOngoingFinishes[oIdx] ?? rawOngoingFinishes[0] ?? '').trim() || null;
+
+      ongoingList.push({
+        id: `ongoing-${rowId}-${oIdx}`,
+        faculty_id: String(rowId),
+        research_status: 'ONGOING',
+        research_title: ongoingTitle,
+        year_started: startYr,
+        expected_year_to_finish: finishYr,
+        year_completed: null,
+        year_completed_raw: null,
+        publication_url: f.ongoing_research_link || null,
+        terminal_report_url: null,
+        source_excel_row: rowId,
+        evidenceFile: null,
+        outputs: [],
+      });
+    });
+
+    // Parse per-study years & outputs from `form3` columns (aligned 1-to-1 by line with `form3_completed_researches`)
+    const yearsArr = f.completed_research_year ? String(f.completed_research_year).split(/\r?\n/).map((s: string) => s.trim()) : [];
+    const patentsArr = f.outputs_patents ? String(f.outputs_patents).split(/\r?\n/).map((s: string) => s.trim()) : [];
+    const journalsArr = f.outputs_journal_publications ? String(f.outputs_journal_publications).split(/\r?\n/).map((s: string) => s.trim()) : [];
+    const booksArr = f.outputs_book_publications ? String(f.outputs_book_publications).split(/\r?\n/).map((s: string) => s.trim()) : [];
+    const terminalsArr = f.outputs_terminal_report ? String(f.outputs_terminal_report).split(/\r?\n/).map((s: string) => s.trim()) : [];
+
+    const buildOutputsForIndex = (crIdx: number, fallbackSingle: boolean, crLink: string | null): Form3ResearchOutputItem[] => {
+      const outs: Form3ResearchOutputItem[] = [];
+      const yrVal = (yearsArr[crIdx] ?? (fallbackSingle ? yearsArr[0] : '')) || null;
+      const patVal = patentsArr[crIdx] ?? (fallbackSingle && crIdx === 0 ? patentsArr[0] : '') ?? '';
+      const jrnVal = journalsArr[crIdx] ?? (fallbackSingle && crIdx === 0 ? journalsArr[0] : '') ?? '';
+      const bkVal = booksArr[crIdx] ?? (fallbackSingle && crIdx === 0 ? booksArr[0] : '') ?? '';
+      const trmVal = terminalsArr[crIdx] ?? (fallbackSingle && crIdx === 0 ? terminalsArr[0] : '') ?? '';
+
+      if (patVal) {
+        outs.push({
+          id: `out-patent-${rowId}-${crIdx}`,
+          research_id: `completed-${rowId}-${crIdx}`,
+          output_type: 'Patent',
+          output_title_or_citation: patVal,
+          year_completed: yrVal,
+          source_url: crLink,
+        });
+      }
+      if (jrnVal) {
+        outs.push({
+          id: `out-journal-${rowId}-${crIdx}`,
+          research_id: `completed-${rowId}-${crIdx}`,
+          output_type: 'Journal Publication',
+          output_title_or_citation: jrnVal,
+          year_completed: yrVal,
+          source_url: crLink,
+        });
+      }
+      if (bkVal) {
+        outs.push({
+          id: `out-book-${rowId}-${crIdx}`,
+          research_id: `completed-${rowId}-${crIdx}`,
+          output_type: 'Book Publication',
+          output_title_or_citation: bkVal,
+          year_completed: yrVal,
+          source_url: crLink,
+        });
+      }
+      if (trmVal) {
+        outs.push({
+          id: `out-terminal-${rowId}-${crIdx}`,
+          research_id: `completed-${rowId}-${crIdx}`,
+          output_type: 'Terminal Report',
+          output_title_or_citation: trmVal,
+          year_completed: yrVal,
+          source_url: trmVal.startsWith('http') ? trmVal : crLink,
+        });
+      }
+      return outs;
+    };
+
+    // Build Completed Research list from `form3_completed_researches` joined by `row_id`
+    const rawCrItems = rawCompletedByRowId[rowId] || [];
+    const completedList: Form3ResearchItem[] = [];
+
+    if (rawCrItems.length > 0) {
+      const isSingleYearFallback = yearsArr.length === 1 && rawCrItems.length === 1;
+      rawCrItems.forEach((crItem, crIdx) => {
+        const yrVal = (yearsArr[crIdx] ?? (isSingleYearFallback ? yearsArr[0] : '')) || null;
+        const trmVal = terminalsArr[crIdx] ?? (crIdx === 0 ? terminalsArr[0] : '') ?? '';
+        const itemOutputs = buildOutputsForIndex(crIdx, rawCrItems.length === 1, crItem.link);
+
+        completedList.push({
+          id: `completed-${rowId}-${crIdx}`,
+          faculty_id: String(rowId),
+          research_status: 'COMPLETED',
+          research_title: crItem.title,
+          year_started: null,
+          expected_year_to_finish: null,
+          year_completed: yrVal,
+          year_completed_raw: yrVal,
+          publication_url: crItem.link,
+          terminal_report_url: trmVal.startsWith('http') ? trmVal : null,
+          source_excel_row: rowId,
+          evidenceFile: crItem.link
+            ? {
+                id: `ev-${crItem.id}`,
+                drive_url: crItem.link,
+                file_name: crItem.title,
+              }
+            : null,
+          outputs: itemOutputs,
+        });
+      });
+    } else {
+      const maxLen = Math.max(yearsArr.length, patentsArr.length, journalsArr.length, booksArr.length, terminalsArr.length);
+      for (let crIdx = 0; crIdx < maxLen; crIdx++) {
+        const yrVal = yearsArr[crIdx] || null;
+        const trmVal = terminalsArr[crIdx] || '';
+        const itemOutputs = buildOutputsForIndex(crIdx, true, null);
+        if (!yrVal && itemOutputs.length === 0) continue;
+
+        completedList.push({
+          id: `completed-${rowId}-${crIdx}`,
+          faculty_id: String(rowId),
+          research_status: 'COMPLETED',
+          research_title: itemOutputs[0]?.output_title_or_citation || 'Completed Research',
+          year_started: null,
+          expected_year_to_finish: null,
+          year_completed: yrVal,
+          year_completed_raw: yrVal,
+          publication_url: null,
+          terminal_report_url: trmVal.startsWith('http') ? trmVal : null,
+          source_excel_row: rowId,
+          evidenceFile: null,
+          outputs: itemOutputs,
+        });
+      }
+    }
+
+    const hasOngoing = ongoingList.length > 0;
+    const hasCompleted = completedList.length > 0;
+    const hasBoth = hasOngoing && hasCompleted;
+    const isActivelyInvolved = hasOngoing || hasCompleted;
+
+    mappedFaculty.push({
+      id: String(rowId),
+      name: rawName || 'Unlisted Faculty',
+      campus: campusCategory === 'CMSE' ? 'Lakewood Campus' : (rawCampus || `${campusCategory} Campus`),
+      campusCategory,
+      department: rawDept || 'General Academic Program',
+      academicRank: String(f.academic_rank || 'Instructor').trim(),
+      fullTimePermanent: isPerm,
+      fullTimeContractual: isCont,
+      partTime: isPart,
+      status,
+      ongoingResearch: ongoingList,
+      completedResearch: completedList,
+      hasOngoing,
+      hasCompleted,
+      hasBoth,
+      isActivelyInvolved,
+      sourceExcelRow: rowId,
+    });
+  });
+
+  if (fetchedSummary.length > 0) {
+    cachedForm3Summary = fetchedSummary;
+  }
+  if (mappedFaculty.length > 0) {
+    cachedForm3Faculty = mappedFaculty;
+  }
+
+  try {
+    if (typeof window !== 'undefined') {
+      if (fetchedSummary.length > 0) {
+        localStorage.setItem(FORM3_SUMMARY_CACHE_KEY, JSON.stringify(fetchedSummary));
+        sessionStorage.setItem(FORM3_SUMMARY_CACHE_KEY, JSON.stringify(fetchedSummary));
+      }
+      if (mappedFaculty.length > 0) {
+        localStorage.setItem(FORM3_FACULTY_CACHE_KEY, JSON.stringify(mappedFaculty));
+        sessionStorage.setItem(FORM3_FACULTY_CACHE_KEY, JSON.stringify(mappedFaculty));
+      }
+    }
+  } catch {}
+
+  return { faculty: mappedFaculty, summary: fetchedSummary };
+}
 
 export async function preloadForm3Data(): Promise<Form3FacultyItem[] | null> {
   if (cachedForm3Faculty && cachedForm3Faculty.length > 0) return cachedForm3Faculty;
+  if (prefetchForm3Promise) {
+    const res = await prefetchForm3Promise;
+    return res.faculty;
+  }
   try {
     const stored = (typeof window !== 'undefined' ? localStorage.getItem(FORM3_FACULTY_CACHE_KEY) : null) ||
                    (typeof window !== 'undefined' ? sessionStorage.getItem(FORM3_FACULTY_CACHE_KEY) : null);
@@ -83,11 +394,21 @@ export async function preloadForm3Data(): Promise<Form3FacultyItem[] | null> {
       const parsed = JSON.parse(stored);
       if (Array.isArray(parsed) && parsed.length > 0) {
         cachedForm3Faculty = parsed;
-        return parsed;
       }
     }
   } catch {}
-  return null;
+
+  prefetchForm3Promise = fetchAllForm3Data().finally(() => {
+    prefetchForm3Promise = null;
+  });
+
+  try {
+    const res = await prefetchForm3Promise;
+    return res.faculty;
+  } catch (err) {
+    console.warn('Form 3 background preload failed:', err);
+    return cachedForm3Faculty;
+  }
 }
 
 export const Form3Page: React.FC = () => {
@@ -153,292 +474,15 @@ export const Form3Page: React.FC = () => {
   }, [selectedModalFaculty]);
 
   const loadSupabaseForm3Data = async (force = false) => {
-    if (force && (!cachedForm3Faculty || cachedForm3Faculty.length === 0)) {
+    if (force || !cachedForm3Faculty || cachedForm3Faculty.length === 0) {
       setLoading(true);
     }
     setError(null);
     try {
-      const client = getSupabaseClient();
-      if (!client) {
-        throw new Error('Supabase client could not be initialized.');
-      }
-
-      // Fetch Form 3 tables (`form3`, `form3_completed_researches`, `form3_summary`) in parallel
-      const [summaryRes, form3Res, completedRes] = await Promise.all([
-        client.from('form3_summary').select('*').order('id', { ascending: true }),
-        client.from('form3').select('*').order('row_id', { ascending: true }),
-        client.from('form3_completed_researches').select('*').order('id', { ascending: true }),
-      ]);
-
-      if (form3Res.error) {
-        throw new Error(`Failed to load Form 3 records: ${form3Res.error.message}`);
-      }
-
-      // 1. Process & Deduplicate Summary Data from `form3_summary`
-      const formatSummaryCampus = (raw: string): string => {
-        const upper = (raw || '').trim().toUpperCase();
-        if (upper.includes('MAIN')) return 'Main Campus';
-        if (upper.includes('PAGADIAN')) return 'Pagadian Campus';
-        if (upper.includes('DUMINGAG')) return 'Dumingag Campus';
-        if (upper.includes('CMSE') || upper.includes('CANUTO')) return 'CMSE Campus';
-        if (upper.includes('ALL CAMPUSES')) return 'ALL CAMPUSES';
-        return (raw || '').trim();
-      };
-
-      const seenSummaryKeys = new Set<string>();
-      const fetchedSummary: Form3SummaryDbRow[] = [];
-      (summaryRes.data || []).forEach((row: any) => {
-        const campus = formatSummaryCampus(row.campus_name || row.campus || '');
-        const dept = String(row.school_name || row.department_or_academic_program || '').trim();
-        if (!campus && !dept) return;
-        const dedupKey = `${campus.toUpperCase()}|${dept.toUpperCase()}`;
-        if (seenSummaryKeys.has(dedupKey)) return;
-        seenSummaryKeys.add(dedupKey);
-
-        fetchedSummary.push({
-          campus,
-          department_or_academic_program: dept,
-          total_faculty: Number(row.no_of_faculty ?? row.total_faculty) || 0,
-          ongoing_faculty: Number(row.ongoing_number ?? row.ongoing_faculty) || 0,
-          ongoing_percentage: Number(row.ongoing_percent ?? row.ongoing_percentage) || 0,
-          completed_faculty: Number(row.completed_number ?? row.completed_faculty) || 0,
-          completed_percentage: Number(row.completed_percent ?? row.completed_percentage) || 0,
-          both_faculty: Number(row.both_number ?? row.both_faculty) || 0,
-          both_percentage: Number(row.both_percent ?? row.both_percentage) || 0,
-        });
-      });
-
-      // 2. Group & Deduplicate Completed Researches from `form3_completed_researches` by `row_id`
-      const rawCompletedByRowId: Record<number, { id: string; title: string; link: string | null }[]> = {};
-      (completedRes.data || []).forEach((cr: any) => {
-        const rowId = Number(cr.row_id);
-        const title = String(cr.research_title || '').trim();
-        const link = cr.drive_link ? String(cr.drive_link).trim() : null;
-        if (!rowId || !title) return;
-        if (!rawCompletedByRowId[rowId]) {
-          rawCompletedByRowId[rowId] = [];
-        }
-        const existing = rawCompletedByRowId[rowId].find(
-          (item) => item.title.toLowerCase() === title.toLowerCase()
-        );
-        if (existing) {
-          if (!existing.link && link) existing.link = link;
-        } else {
-          rawCompletedByRowId[rowId].push({
-            id: String(cr.id ?? `${rowId}-${rawCompletedByRowId[rowId].length + 1}`),
-            title,
-            link,
-          });
-        }
-      });
-
-      // 3. Build Faculty Profiles from `form3` joined with `form3_completed_researches`
-      const seenFacultyRowIds = new Set<number>();
-      const mappedFaculty: Form3FacultyItem[] = [];
-
-      (form3Res.data || []).forEach((f: any, idx: number) => {
-        const rowId = Number(f.row_id ?? idx + 1);
-        if (seenFacultyRowIds.has(rowId)) return;
-        seenFacultyRowIds.add(rowId);
-
-        const rawCampus = String(f.campus_name || f.campus || '').trim();
-        let campusCategory: 'Main' | 'Pagadian' | 'Dumingag' | 'CMSE' = 'Main';
-        const lowerCampus = rawCampus.toLowerCase();
-        if (lowerCampus.includes('pagadian')) campusCategory = 'Pagadian';
-        else if (lowerCampus.includes('dumingag')) campusCategory = 'Dumingag';
-        else if (lowerCampus.includes('cmse') || lowerCampus.includes('canuto')) campusCategory = 'CMSE';
-
-        const rawName = String(f.faculty_name || f.full_name || f.name || '').trim();
-        const rawDept = String(f.school_name || f.department_or_academic_program || f.department || '').trim();
-
-        const isPerm = Boolean(f.is_full_time_permanent ?? f.employment_permanent ?? f.full_time_permanent);
-        const isCont = Boolean(f.is_full_time_contractual ?? f.employment_contractual ?? f.full_time_contractual);
-        const isPart = Boolean(f.is_part_time ?? f.employment_part_time ?? f.part_time);
-        const status = isPerm ? 'Permanent' : isCont ? 'Contractual' : isPart ? 'Part-Time' : 'Permanent';
-
-        // Build Ongoing Research list from `form3` columns (supporting multiple ongoing studies separated by newline)
-        const ongoingList: Form3ResearchItem[] = [];
-        const rawOngoingTitles = f.ongoing_research_title ? String(f.ongoing_research_title).split(/\r?\n/) : [];
-        const rawOngoingStarts = f.ongoing_research_year_started ? String(f.ongoing_research_year_started).split(/\r?\n/) : [];
-        const rawOngoingFinishes = f.ongoing_research_expected_finish ? String(f.ongoing_research_expected_finish).split(/\r?\n/) : [];
-
-        rawOngoingTitles.forEach((rawTitle: string, oIdx: number) => {
-          const ongoingTitle = rawTitle.trim();
-          if (!ongoingTitle) return;
-          const startYr = (rawOngoingStarts[oIdx] ?? rawOngoingStarts[0] ?? '').trim() || null;
-          const finishYr = (rawOngoingFinishes[oIdx] ?? rawOngoingFinishes[0] ?? '').trim() || null;
-
-          ongoingList.push({
-            id: `ongoing-${rowId}-${oIdx}`,
-            faculty_id: String(rowId),
-            research_status: 'ONGOING',
-            research_title: ongoingTitle,
-            year_started: startYr,
-            expected_year_to_finish: finishYr,
-            year_completed: null,
-            year_completed_raw: null,
-            publication_url: f.ongoing_research_link || null,
-            terminal_report_url: null,
-            source_excel_row: rowId,
-            evidenceFile: null,
-            outputs: [],
-          });
-        });
-
-        // Parse per-study years & outputs from `form3` columns (aligned 1-to-1 by line with `form3_completed_researches`)
-        const yearsArr = f.completed_research_year ? String(f.completed_research_year).split(/\r?\n/).map((s: string) => s.trim()) : [];
-        const patentsArr = f.outputs_patents ? String(f.outputs_patents).split(/\r?\n/).map((s: string) => s.trim()) : [];
-        const journalsArr = f.outputs_journal_publications ? String(f.outputs_journal_publications).split(/\r?\n/).map((s: string) => s.trim()) : [];
-        const booksArr = f.outputs_book_publications ? String(f.outputs_book_publications).split(/\r?\n/).map((s: string) => s.trim()) : [];
-        const terminalsArr = f.outputs_terminal_report ? String(f.outputs_terminal_report).split(/\r?\n/).map((s: string) => s.trim()) : [];
-
-        const buildOutputsForIndex = (crIdx: number, fallbackSingle: boolean, crLink: string | null): Form3ResearchOutputItem[] => {
-          const outs: Form3ResearchOutputItem[] = [];
-          const yrVal = (yearsArr[crIdx] ?? (fallbackSingle ? yearsArr[0] : '')) || null;
-          const patVal = patentsArr[crIdx] ?? (fallbackSingle && crIdx === 0 ? patentsArr[0] : '') ?? '';
-          const jrnVal = journalsArr[crIdx] ?? (fallbackSingle && crIdx === 0 ? journalsArr[0] : '') ?? '';
-          const bkVal = booksArr[crIdx] ?? (fallbackSingle && crIdx === 0 ? booksArr[0] : '') ?? '';
-          const trmVal = terminalsArr[crIdx] ?? (fallbackSingle && crIdx === 0 ? terminalsArr[0] : '') ?? '';
-
-          if (patVal) {
-            outs.push({
-              id: `out-patent-${rowId}-${crIdx}`,
-              research_id: `completed-${rowId}-${crIdx}`,
-              output_type: 'Patent',
-              output_title_or_citation: patVal,
-              year_completed: yrVal,
-              source_url: crLink,
-            });
-          }
-          if (jrnVal) {
-            outs.push({
-              id: `out-journal-${rowId}-${crIdx}`,
-              research_id: `completed-${rowId}-${crIdx}`,
-              output_type: 'Journal Publication',
-              output_title_or_citation: jrnVal,
-              year_completed: yrVal,
-              source_url: crLink,
-            });
-          }
-          if (bkVal) {
-            outs.push({
-              id: `out-book-${rowId}-${crIdx}`,
-              research_id: `completed-${rowId}-${crIdx}`,
-              output_type: 'Book Publication',
-              output_title_or_citation: bkVal,
-              year_completed: yrVal,
-              source_url: crLink,
-            });
-          }
-          if (trmVal) {
-            outs.push({
-              id: `out-terminal-${rowId}-${crIdx}`,
-              research_id: `completed-${rowId}-${crIdx}`,
-              output_type: 'Terminal Report',
-              output_title_or_citation: trmVal,
-              year_completed: yrVal,
-              source_url: trmVal.startsWith('http') ? trmVal : crLink,
-            });
-          }
-          return outs;
-        };
-
-        // Build Completed Research list from `form3_completed_researches` joined by `row_id`
-        const rawCrItems = rawCompletedByRowId[rowId] || [];
-        const completedList: Form3ResearchItem[] = [];
-
-        if (rawCrItems.length > 0) {
-          const isSingleYearFallback = yearsArr.length === 1 && rawCrItems.length === 1;
-          rawCrItems.forEach((crItem, crIdx) => {
-            const yrVal = (yearsArr[crIdx] ?? (isSingleYearFallback ? yearsArr[0] : '')) || null;
-            const trmVal = terminalsArr[crIdx] ?? (crIdx === 0 ? terminalsArr[0] : '') ?? '';
-            const itemOutputs = buildOutputsForIndex(crIdx, rawCrItems.length === 1, crItem.link);
-
-            completedList.push({
-              id: `completed-${rowId}-${crIdx}`,
-              faculty_id: String(rowId),
-              research_status: 'COMPLETED',
-              research_title: crItem.title,
-              year_started: null,
-              expected_year_to_finish: null,
-              year_completed: yrVal,
-              year_completed_raw: yrVal,
-              publication_url: crItem.link,
-              terminal_report_url: trmVal.startsWith('http') ? trmVal : null,
-              source_excel_row: rowId,
-              evidenceFile: crItem.link
-                ? {
-                    id: `ev-${crItem.id}`,
-                    drive_url: crItem.link,
-                    file_name: crItem.title,
-                  }
-                : null,
-              outputs: itemOutputs,
-            });
-          });
-        } else {
-          const maxLen = Math.max(yearsArr.length, patentsArr.length, journalsArr.length, booksArr.length, terminalsArr.length);
-          for (let crIdx = 0; crIdx < maxLen; crIdx++) {
-            const yrVal = yearsArr[crIdx] || null;
-            const trmVal = terminalsArr[crIdx] || '';
-            const itemOutputs = buildOutputsForIndex(crIdx, true, null);
-            if (!yrVal && itemOutputs.length === 0) continue;
-
-            completedList.push({
-              id: `completed-${rowId}-${crIdx}`,
-              faculty_id: String(rowId),
-              research_status: 'COMPLETED',
-              research_title: itemOutputs[0]?.output_title_or_citation || 'Completed Research',
-              year_started: null,
-              expected_year_to_finish: null,
-              year_completed: yrVal,
-              year_completed_raw: yrVal,
-              publication_url: null,
-              terminal_report_url: trmVal.startsWith('http') ? trmVal : null,
-              source_excel_row: rowId,
-              evidenceFile: null,
-              outputs: itemOutputs,
-            });
-          }
-        }
-
-        const hasOngoing = ongoingList.length > 0;
-        const hasCompleted = completedList.length > 0;
-        const hasBoth = hasOngoing && hasCompleted;
-        const isActivelyInvolved = hasOngoing || hasCompleted;
-
-        mappedFaculty.push({
-          id: String(rowId),
-          name: rawName || 'Unlisted Faculty',
-          campus: rawCampus || `${campusCategory} Campus`,
-          campusCategory,
-          department: rawDept || 'General Academic Program',
-          academicRank: String(f.academic_rank || 'Instructor').trim(),
-          fullTimePermanent: isPerm,
-          fullTimeContractual: isCont,
-          partTime: isPart,
-          status,
-          ongoingResearch: ongoingList,
-          completedResearch: completedList,
-          hasOngoing,
-          hasCompleted,
-          hasBoth,
-          isActivelyInvolved,
-          sourceExcelRow: rowId,
-        });
-      });
-
+      const task = prefetchForm3Promise || fetchAllForm3Data();
+      const { faculty: mappedFaculty, summary: fetchedSummary } = await task;
       setSummaryList(fetchedSummary);
       setFaculty(mappedFaculty);
-      cachedForm3Summary = fetchedSummary;
-      cachedForm3Faculty = mappedFaculty;
-
-      try {
-        localStorage.setItem(FORM3_SUMMARY_CACHE_KEY, JSON.stringify(fetchedSummary));
-        localStorage.setItem(FORM3_FACULTY_CACHE_KEY, JSON.stringify(mappedFaculty));
-        sessionStorage.setItem(FORM3_SUMMARY_CACHE_KEY, JSON.stringify(fetchedSummary));
-        sessionStorage.setItem(FORM3_FACULTY_CACHE_KEY, JSON.stringify(mappedFaculty));
-      } catch {}
     } catch (err: any) {
       console.error('Error fetching Form 3 data from Supabase:', err);
       setError(err?.message || 'Failed to fetch Form 3 records from Supabase.');
@@ -449,6 +493,28 @@ export const Form3Page: React.FC = () => {
 
   useEffect(() => {
     loadSupabaseForm3Data(false);
+
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+
+    const channel = supabase
+      .channel('form3_realtime_sync')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'form3' }, () => {
+        loadSupabaseForm3Data(false);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'form3_completed_researches' }, () => {
+        loadSupabaseForm3Data(false);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'form3_summary' }, () => {
+        loadSupabaseForm3Data(false);
+      })
+      .subscribe();
+
+    return () => {
+      try {
+        supabase.removeChannel(channel);
+      } catch {}
+    };
   }, []);
 
   // Compute Distinct Schools for Dropdown Filter
@@ -554,7 +620,7 @@ export const Form3Page: React.FC = () => {
       totalRow?: Form3SummaryDbRow;
     }[] = [];
 
-    const campusOrder = ['Main Campus', 'Pagadian Campus', 'Dumingag Campus', 'CMSE Campus'];
+    const campusOrder = ['Main Campus', 'Pagadian Campus', 'Dumingag Campus', 'Lakewood Campus'];
     let grandTotal: Form3SummaryDbRow | undefined = undefined;
 
     summaryList.forEach((row) => {
@@ -728,7 +794,7 @@ export const Form3Page: React.FC = () => {
                   { id: 'Main', label: 'Main' },
                   { id: 'Pagadian', label: 'Pagadian' },
                   { id: 'Dumingag', label: 'Dumingag' },
-                  { id: 'CMSE', label: 'CMSE' },
+                  { id: 'CMSE', label: 'Lakewood' },
                 ].map((c) => (
                   <button
                     key={c.id}

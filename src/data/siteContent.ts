@@ -115,7 +115,7 @@ export const siteContent = {
       "This portal reflects our transparency and readiness. Every document here is a testament to the dedication of our faculty, staff, and administration."
     ],
     fullMessageParagraphs: [
-      "Prepared in fulfillment of Republic Act No. 12295 and the operational requirements of CMO No. 46, series of 2012, this portal consolidates our verified institutional records across all eight CHED evaluation forms and fifty-one degree program offerings across Main Campus in Mati, San Miguel, Dumingag Campus, Pagadian Annex, and the Canuto M.S. Enerio (Lakewood) Campus.",
+      "Prepared in fulfillment of Republic Act No. 12295 and the operational requirements of CMO No. 46, series of 2012, this portal consolidates our verified institutional records across all eight CHED evaluation forms and fifty-one degree program offerings across Main Campus in Mati, San Miguel, Dumingag Campus, Pagadian Annex, and Lakewood Campus.",
       "From strengthening our graduate-qualified faculty profile and expanding funded research outputs to upgrading our library holdings, student support systems, research linkages, and community extension initiatives, our preparation has been guided by rigorous self-assessment and continuous quality improvement as we take this historic step toward becoming a full-fledged state university."
     ],
     metaDetails: [
@@ -186,7 +186,7 @@ export const siteContent = {
       { name: "Main", programsCount: 23, percent: 65, complied: 346, notComplied: 31, pending: 158, total: 535, campusFilter: "Main campus" },
       { name: "Dumingag", programsCount: 14, percent: 67, complied: 224, notComplied: 28, pending: 80, total: 332, campusFilter: "Dumingag campus" },
       { name: "Pagadian", programsCount: 6, percent: 81, complied: 109, notComplied: 9, pending: 16, total: 134, campusFilter: "Pagadian campus" },
-      { name: "CMSE (Lakewood)", programsCount: 5, percent: 41, complied: 51, notComplied: 27, pending: 47, total: 125, campusFilter: "CMSE (Lakewood)" }
+      { name: "Lakewood", programsCount: 5, percent: 41, complied: 51, notComplied: 27, pending: 47, total: 125, campusFilter: "Lakewood" }
     ] as CampusScorecard[],
     legend: {
       complied: "Complied",
@@ -198,6 +198,6 @@ export const siteContent = {
   closingPanel: {
     heading: "In review with CHEDRO IX",
     subtitle: "One conversion, four campuses.",
-    campuses: ["Main", "Dumingag", "Pagadian", "CMSE (Lakewood)"]
+    campuses: ["Main", "Dumingag", "Pagadian", "Lakewood"]
   }
 };

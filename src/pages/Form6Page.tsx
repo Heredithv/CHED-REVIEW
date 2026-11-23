@@ -91,9 +91,9 @@ export const FORM6_CAMPUS_TABS: {
   },
   {
     id: 'CMSE Campus',
-    tabLabel: 'CMSE (Lakewood)',
-    shortName: 'CMSE',
-    fullLabel: 'CMSE Campus'
+    tabLabel: 'Lakewood',
+    shortName: 'Lakewood',
+    fullLabel: 'Lakewood Campus'
   }
 ];
 
@@ -105,7 +105,7 @@ interface DocumentViewerModalState {
   isFolder: boolean;
 }
 
-const FORM6_CACHE_KEY = 'jhcsc_form6_supabase_v5';
+const FORM6_CACHE_KEY = 'jhcsc_form6_supabase_v6';
 
 let cachedForm6ByCampus: Record<CampusId, Form6RecordItem[]> | null = null;
 let prefetchForm6Promise: Promise<Record<CampusId, Form6RecordItem[]> | null> | null = null;
@@ -296,6 +296,9 @@ function cleanInstitutionalText(raw?: string | null): string {
     .replace(/\bthis\s+CMO\b/gi, 'these institutional standards')
     .replace(/\bCHED\s+Anti-?Hazing\s+CMO\b/gi, 'Anti-Hazing Policy')
     .replace(/\bCMO\.?\s*(\d+)/gi, 'Item $1')
+    .replace(/\bCMSE\s*\((?:Lakewood)\)/gi, 'Lakewood')
+    .replace(/\bCanuto\s+M\.?\s*S\.?\s*Enerio\s*\(?CMSE\)?/gi, 'Lakewood')
+    .replace(/\bCMSE\b/g, 'Lakewood')
     .replace(/\s{2,}/g, ' ')
     .trim();
 }
@@ -364,9 +367,13 @@ export async function fetchAllForm6Data(): Promise<Record<CampusId, Form6RecordI
         rawEvText
       );
     const resolvedDriveTitle = cleanLink ? lookupDriveLinkTitle(cleanLink) : null;
-    const cleanText =
+    const rawCleanText =
       (!isGenericText ? rawEvText : resolvedDriveTitle || rawEvText) ||
       (cleanLink ? 'Supporting Document' : '');
+    const cleanText = rawCleanText
+      .replace(/\bCMSE\s*\((?:Lakewood)\)/gi, 'Lakewood')
+      .replace(/\bCanuto\s+M\.?\s*S\.?\s*Enerio\s*\(?CMSE\)?/gi, 'Lakewood')
+      .replace(/\bCMSE\b/g, 'Lakewood');
     if (!cleanText && !cleanLink) return;
 
     evidencesByParentId.get(key)!.push({

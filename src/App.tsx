@@ -53,18 +53,20 @@ export function App() {
   const [currentHash, setCurrentHash] = useState<string>(window.location.hash || '#home');
 
   useEffect(() => {
-    // Eagerly pre-load Forms 1 to 8 into memory & local cache so tab switching is instantaneous
-    preloadForm1Data();
-    const preloadTimer = setTimeout(() => {
+    // Stagger background preloads so the active page's own Supabase query finishes first without connection contention
+    const t1 = setTimeout(() => {
+      preloadForm1Data();
       preloadForm2Data();
       preloadForm3Data();
+      preloadForm7Data();
+    }, 350);
+    const t2 = setTimeout(() => {
       preloadForm4Data();
       preloadForm5Data();
       preloadForm6Data();
-      preloadForm7Data();
       preloadForm8Data();
       preloadProgramsData();
-    }, 100);
+    }, 1100);
 
     // Ensure font preset is applied immediately
     const savedFont = localStorage.getItem('jhcsc_font') || 'poppins';
@@ -103,7 +105,11 @@ export function App() {
     handleHashChange();
     initAnimations();
 
-    return () => window.removeEventListener('hashchange', handleHashChange);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      window.removeEventListener('hashchange', handleHashChange);
+    };
   }, []);
 
   // Parse path & params from hash
